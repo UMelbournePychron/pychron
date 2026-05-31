@@ -499,7 +499,8 @@ class Bracketing1DRegressionTest(TestCase):
         self.xs = array([0.0, 10.0, 20.0])
         self.ys = array([1.0, 2.0, 4.0])
         self.es = array([0.1, 0.2, 0.4])
-        self.reg = Bracketing1DRegressor(xs=self.xs, ys=self.ys, yserr=self.es)
+        self.reg = Bracketing1DRegressor()
+        self.reg.trait_set(xs=self.xs, ys=self.ys, yserr=self.es)
         self.reg.calculate()
 
     def _predict(self, p):
