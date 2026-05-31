@@ -228,8 +228,8 @@ class BaseFluxVisualizationEditor(BaseTraitsEditor):
 
             x, y = t.transforms(x, y)
             # print(x)
-        except ValueError as e:
-            self.debug("no monitor positions to fit, {}".format(e))
+        except ValueError as err:
+            self.debug("no monitor positions to fit, {}".format(err))
             return
 
         # print(x)

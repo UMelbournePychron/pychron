@@ -41,7 +41,7 @@ class FluxSubOptions(SubOptions):
             Item("selected_monitor", label="Flux Const."),
             Readonly(
                 "lambda_k",
-                format_func=lambda x: "{:0.3u}".format(x),
+                format_func=lambda x: "{:0.3u}".format(x),  # type: ignore[str-format]
                 label="Total \u03bb K",
             ),
             Readonly("monitor_age"),
