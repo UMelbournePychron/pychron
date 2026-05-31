@@ -26,6 +26,7 @@ from pychron.pychron_constants import (
     LEAST_SQUARES_1D,
     WEIGHTED_MEAN_1D,
     BRACKETING,
+    BRACKETING_1D,
     NN,
     MATCHING,
     HIGH_ORDER_POLY,
@@ -41,7 +42,7 @@ class FluxSubOptions(SubOptions):
             Readonly(
                 "lambda_k",
                 format_func=lambda x: "{:0.3u}".format(x),
-                label="Total \u03BB K",
+                label="Total \u03bb K",
             ),
             Readonly("monitor_age"),
             BorderVGroup(
@@ -62,8 +63,8 @@ class FluxSubOptions(SubOptions):
                 Item(
                     "one_d_axis",
                     label="Axis",
-                    visible_when='model_kind in ("{}","{}")'.format(
-                        LEAST_SQUARES_1D, WEIGHTED_MEAN_1D
+                    visible_when='model_kind in ("{}","{}","{}")'.format(
+                        LEAST_SQUARES_1D, WEIGHTED_MEAN_1D, BRACKETING_1D
                     ),
                 ),
                 Item(

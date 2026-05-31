@@ -31,6 +31,10 @@ from pychron.core.regression.new_york_regressor import (
     NewYorkRegressor,
 )
 from pychron.core.regression.ols_regressor import OLSRegressor
+from pychron.core.regression.flux_regressor import (
+    Bracketing1DRegressor,
+    NearestNeighborFluxRegressor,
+)
 
 # from pychron.core.regression.york_regressor import YorkRegressor
 from pychron.core.regression.tests.standard_data import (
@@ -187,9 +191,7 @@ class PearsonRegressionTest(RegressionTestCase):
 
     def test_slope_err(self):
         exp = pearson(self.kind)
-        self.assertAlmostEqual(
-            self.reg.get_slope_variance() ** 0.5, exp["slope_err"], 4
-        )
+        self.assertAlmostEqual(self.reg.get_slope_variance() ** 0.5, exp["slope_err"], 4)
 
     def test_y_intercept(self):
         expected = pearson(self.kind)
@@ -197,9 +199,7 @@ class PearsonRegressionTest(RegressionTestCase):
 
     def test_y_intercept_error(self):
         expected = pearson(self.kind)
-        self.assertAlmostEqual(
-            self.reg.get_intercept_error(), expected["intercept_err"], 4
-        )
+        self.assertAlmostEqual(self.reg.get_intercept_error(), expected["intercept_err"], 4)
 
     def test_mswd(self):
         expected = pearson(self.kind)
@@ -228,21 +228,15 @@ class ExpoRegressionTest(TestCase):
 
     def test_a(self):
         self.reg.calculate()
-        self.assertAlmostEqual(
-            self.reg.coefficients[0], self.solution["coefficients"][0]
-        )
+        self.assertAlmostEqual(self.reg.coefficients[0], self.solution["coefficients"][0])
 
     def test_b(self):
         self.reg.calculate()
-        self.assertAlmostEqual(
-            self.reg.coefficients[1], self.solution["coefficients"][1]
-        )
+        self.assertAlmostEqual(self.reg.coefficients[1], self.solution["coefficients"][1])
 
     def test_c(self):
         self.reg.calculate()
-        self.assertAlmostEqual(
-            self.reg.coefficients[2], self.solution["coefficients"][2]
-        )
+        self.assertAlmostEqual(self.reg.coefficients[2], self.solution["coefficients"][2])
 
 
 class ExpoRegressionTest2(TestCase):
@@ -253,9 +247,41 @@ class ExpoRegressionTest2(TestCase):
 
     def test_c(self):
         self.reg.calculate()
-        self.assertAlmostEqual(
-            self.reg.coefficients[2], self.solution["coefficients"][2], places=5
+        self.assertAlmostEqual(self.reg.coefficients[2], self.solution["coefficients"][2], places=5)
+
+
+class NearestNeighborLinearTest(TestCase):
+    """2-D bracketing (NN n=2, LINEAR): projection fraction + quadrature error."""
+
+    def setUp(self):
+        from numpy import array
+        from pychron.pychron_constants import LINEAR
+
+        self.reg = NearestNeighborFluxRegressor(
+            xs=array([[0.0, 0.0], [10.0, 0.0]]),
+            ys=array([1.0, 2.0]),
+            yserr=array([0.1, 0.2]),
+            n=2,
+            interpolation_style=LINEAR,
         )
+        self.reg.calculate()
+
+    def test_midpoint_value(self):
+        from numpy import array
+
+        self.assertAlmostEqual(self.reg.predict(array([[5.0, 0.0]]))[0], 1.5, 6)
+
+    def test_error_quadrature(self):
+        from numpy import array
+
+        expected = (((0.5 * 0.1) ** 2) + ((0.5 * 0.2) ** 2)) ** 0.5
+        self.assertAlmostEqual(self.reg.predict_error(array([[5.0, 0.0]]))[0], expected, 9)
+
+    def test_offline_projection(self):
+        from numpy import array
+
+        # an unknown off the monitor line still projects to f=0.5
+        self.assertAlmostEqual(self.reg.predict(array([[5.0, 3.0]]))[0], 1.5, 6)
 
 
 # ============= EOF =============================================
@@ -461,3 +487,81 @@ class ExpoRegressionTest2(TestCase):
 # #        print y, yal
 #        self.assertEqual(y, self.Yprederr_5_parabolic)
 # #        self.assertEqual(yal, self.Yprederr_5_parabolic)
+
+
+class Bracketing1DRegressionTest(TestCase):
+    """Lever-rule 1-D bracketing: interpolation, quadrature error, extrapolation."""
+
+    def setUp(self):
+        from numpy import array
+
+        # monitors along a single axis
+        self.xs = array([0.0, 10.0, 20.0])
+        self.ys = array([1.0, 2.0, 4.0])
+        self.es = array([0.1, 0.2, 0.4])
+        self.reg = Bracketing1DRegressor(xs=self.xs, ys=self.ys, yserr=self.es)
+        self.reg.calculate()
+
+    def _predict(self, p):
+        from numpy import array
+
+        return self.reg.predict(array([p]))[0]
+
+    def _predict_error(self, p):
+        from numpy import array
+
+        return self.reg.predict_error(array([p]))[0]
+
+    def test_interpolate_midpoint(self):
+        # f=0.5 between (0,1) and (10,2)
+        self.assertAlmostEqual(self._predict(5.0), 1.5, 6)
+
+    def test_interpolate_quarter(self):
+        # f=0.25 between (0,1) and (10,2)
+        self.assertAlmostEqual(self._predict(2.5), 1.25, 6)
+
+    def test_error_quadrature(self):
+        # sqrt(((1-0.5)*0.1)^2 + (0.5*0.2)^2)
+        expected = (((0.5 * 0.1) ** 2) + ((0.5 * 0.2) ** 2)) ** 0.5
+        self.assertAlmostEqual(self._predict_error(5.0), expected, 9)
+
+    def test_exact_on_node(self):
+        self.assertAlmostEqual(self._predict(10.0), 2.0, 6)
+        self.assertAlmostEqual(self._predict(0.0), 1.0, 6)
+        self.assertAlmostEqual(self._predict(20.0), 4.0, 6)
+
+    def test_extrapolate_below(self):
+        # below range uses pair (0,10): f=-1 -> 1 + (-1)*(2-1) = 0
+        self.assertAlmostEqual(self._predict(-10.0), 0.0, 6)
+
+    def test_extrapolate_above(self):
+        # above range uses pair (10,20): f=2 -> 2 + 2*(4-2) = 6
+        self.assertAlmostEqual(self._predict(30.0), 6.0, 6)
+
+    def test_unsorted_input(self):
+        from numpy import array
+
+        reg = Bracketing1DRegressor(
+            xs=array([20.0, 0.0, 10.0]),
+            ys=array([4.0, 1.0, 2.0]),
+            yserr=array([0.4, 0.1, 0.2]),
+        )
+        reg.calculate()
+        self.assertAlmostEqual(reg.predict(array([5.0]))[0], 1.5, 6)
+
+    def test_set_neighbors(self):
+        class P:
+            def __init__(self, x, hid):
+                self.x = x
+                self.y = 0.0
+                self.hole_id = hid
+                self.bracket_a = None
+                self.bracket_b = None
+
+        mons = [P(0.0, "m0"), P(10.0, "m1"), P(20.0, "m2")]
+        reg = Bracketing1DRegressor(xs=self.xs, ys=self.ys, yserr=self.es, one_d_axis="X")
+        reg.calculate()
+        unk = P(5.0, "u0")
+        reg.set_neighbors([unk], mons)
+        self.assertEqual(unk.bracket_a, "m0")
+        self.assertEqual(unk.bracket_b, "m1")
