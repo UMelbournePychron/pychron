@@ -25,6 +25,7 @@ from numpy import (
     average,
     ravel,
     searchsorted,
+    where,
     zeros_like,
     sin,
     cos,
@@ -267,18 +268,34 @@ class Bracketing1DRegressor(SpecialFluxRegressor):
         f = 0.0 if x1 == x0 else (p - x0) / (x1 - x0)
         return lo, hi, f
 
-    def _predict_one(self, p, return_error):
-        lo, hi, f = self._bracket_indices(p)
-        if return_error:
-            e0, e1 = self._ses[lo], self._ses[hi]
-            return (((1 - f) * e0) ** 2 + (f * e1) ** 2) ** 0.5
-        y0, y1 = self._sys[lo], self._sys[hi]
-        return y0 + f * (y1 - y0)
-
     def _predict(self, pts, return_error=False):
-        if self._sxs.shape[0] < 2:
-            return zeros_like(asarray(pts, dtype=float))
-        return [self._predict_one(float(p), return_error) for p in pts]
+        sxs = self._sxs
+        n = sxs.shape[0]
+        ps = asarray(pts, dtype=float).ravel()
+        if n < 2:
+            return zeros_like(ps)
+
+        # Vectorized bracket lookup (mirrors _bracket_indices per point):
+        #   hi = searchsorted; clamp so lo/hi index a valid adjacent pair;
+        #   below the low end -> pair (0,1), above the high end -> (n-2,n-1).
+        hi = searchsorted(sxs, ps)
+        hi = hi.clip(1, n - 1)
+        lo = hi - 1
+
+        x0 = sxs[lo]
+        x1 = sxs[hi]
+        dx = x1 - x0
+        # guard duplicate coords (dx==0) -> f=0 (matches scalar path)
+        f = where(dx == 0, 0.0, (ps - x0) / where(dx == 0, 1.0, dx))
+
+        if return_error:
+            e0 = self._ses[lo]
+            e1 = self._ses[hi]
+            return (((1 - f) * e0) ** 2 + (f * e1) ** 2) ** 0.5
+
+        y0 = self._sys[lo]
+        y1 = self._sys[hi]
+        return y0 + f * (y1 - y0)
 
     def set_neighbors(self, unks, mons):
         if self._sxs.shape[0] < 2:
