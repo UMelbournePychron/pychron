@@ -261,11 +261,16 @@ class BaseFluxVisualizationEditor(BaseTraitsEditor):
         options = self.plotter_options
         ipositions = self.unknown_positions + self.monitor_positions
 
+        # Apply the SAME rotation used for the fit (line ~229) to the
+        # prediction positions. The regressor is trained in the rotated frame,
+        # so querying it with raw (unrotated) coordinates produces a systematic
+        # position mismatch whenever rotation != 0.
+        px, py = t.transforms(array([p.x for p in ipositions]), array([p.y for p in ipositions]))
+        px, py = array(px), array(py)
         if options.model_kind in (LEAST_SQUARES_1D, WEIGHTED_MEAN_1D, BRACKETING_1D):
-            k = options.one_d_axis.lower()
-            pts = array([getattr(p, k) for p in ipositions])
+            pts = px if options.one_d_axis == "X" else py
         else:
-            pts = array([[p.x, p.y] for p in ipositions])
+            pts = vstack((px, py)).T
 
         if options.use_monte_carlo and options.model_kind not in (
             MATCHING,
