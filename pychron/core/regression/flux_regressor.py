@@ -226,10 +226,6 @@ class Bracketing1DRegressor(SpecialFluxRegressor):
     """
 
     one_d_axis = Str("X")
-    _order = None
-    _sxs = None
-    _sys = None
-    _ses = None
 
     def calculate(self):
         # sort once; order maps sorted index -> original monitor index so
