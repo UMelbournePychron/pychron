@@ -566,3 +566,136 @@ class Bracketing1DRegressionTest(TestCase):
         reg.set_neighbors([unk], mons)
         self.assertEqual(unk.bracket_a, "m0")
         self.assertEqual(unk.bracket_b, "m1")
+
+
+# ---- tube (1-D vertical) irradiation geometry ---------------------------------
+# Holder file format (pychron.dvc.meta_object.IrradiationGeometry):
+#   header  "count,default_radius"
+#   then    "x,y,r" per hole  -> holes = [(x, y, r, hole_id), ...]
+# A "tube" stacks all holes along Y at x=0 with unit spacing (y = 0..49).
+TUBE_GEOM_TEXT = "50,0.0175\n" + "\n".join("0.0000,{:.4f},1.0000".format(i) for i in range(50))
+
+
+def _load_tube_geometry():
+    import os
+    import tempfile
+
+    from pychron.dvc.meta_object import IrradiationGeometry
+
+    fd, p = tempfile.mkstemp(suffix=".txt")
+    try:
+        os.write(fd, TUBE_GEOM_TEXT.encode())
+        os.close(fd)
+        return IrradiationGeometry(p).holes
+    finally:
+        os.remove(p)
+
+
+class TubeGeometryParseTest(TestCase):
+    """Parse a tube holder file via IrradiationGeometry."""
+
+    def setUp(self):
+        self.holes = _load_tube_geometry()
+
+    def test_count(self):
+        self.assertEqual(len(self.holes), 50)
+
+    def test_tuple_shape(self):
+        # (x, y, r, hole_id) with hole_id a string
+        x, y, r, hid = self.holes[0]
+        self.assertEqual((x, y, r, hid), (0.0, 0.0, 1.0, "1"))
+
+    def test_x_all_zero(self):
+        self.assertTrue(all(h[0] == 0.0 for h in self.holes))
+
+    def test_y_monotonic_unit_spacing(self):
+        ys = [h[1] for h in self.holes]
+        self.assertEqual(ys, [float(i) for i in range(50)])
+        self.assertTrue(all((b - a) == 1.0 for a, b in zip(ys, ys[1:])))
+
+    def test_hole_ids(self):
+        self.assertEqual([h[3] for h in self.holes], [str(i) for i in range(1, 51)])
+
+
+class TubeGeometryFluxTest(TestCase):
+    """Flux fitting/plotting for the 1-D 'tube' geometry.
+
+    Monitors are a subset of holes; J varies linearly with height
+    J(y) = j0 + slope * y. Bracketing1D with one_d_axis='Y' must recover it
+    by lever-rule interpolation, including linear extrapolation above the
+    topmost monitor.
+    """
+
+    def setUp(self):
+        from numpy import array
+
+        self.holes = _load_tube_geometry()
+
+        self.j0 = 1.0e-4
+        self.slope = 1.0e-6
+
+        # every 10th hole is a monitor: y = 0, 10, 20, 30, 40
+        mons = self.holes[::10]
+        self.mon_y = array([h[1] for h in mons])
+        self.mon_j = array([self.j0 + self.slope * h[1] for h in mons])
+        self.mon_e = array([1.0e-7] * len(mons))
+
+        self.reg = Bracketing1DRegressor()
+        self.reg.trait_set(xs=self.mon_y, ys=self.mon_j, yserr=self.mon_e, one_d_axis="Y")
+        self.reg.calculate()
+
+    def _predict(self, y):
+        from numpy import array
+
+        return self.reg.predict(array([y]))[0]
+
+    def _expected(self, y):
+        return self.j0 + self.slope * y
+
+    def test_interpolate_between_monitors(self):
+        # midway between monitors at y=10 and y=20
+        self.assertAlmostEqual(self._predict(15.0), self._expected(15.0), 12)
+
+    def test_exact_on_monitor(self):
+        self.assertAlmostEqual(self._predict(20.0), self.mon_j[2], 12)
+
+    def test_every_hole_on_gradient(self):
+        # every hole (interp + the extrapolated tail above y=40) lies on J(y)
+        for h in self.holes:
+            y = h[1]
+            self.assertAlmostEqual(self._predict(y), self._expected(y), 12)
+
+    def test_extrapolate_above_top_monitor(self):
+        # holes above the last monitor (y=40) extrapolate along the gradient
+        self.assertAlmostEqual(self._predict(49.0), self._expected(49.0), 12)
+
+    def test_error_quadrature_midpoint(self):
+        from numpy import array
+
+        e = self.reg.predict_error(array([15.0]))[0]
+        expected = (((0.5 * 1.0e-7) ** 2) + ((0.5 * 1.0e-7) ** 2)) ** 0.5
+        self.assertAlmostEqual(e, expected, 15)
+
+    def test_set_neighbors_brackets(self):
+        class P:
+            bracket_a: object = None
+            bracket_b: object = None
+
+            def __init__(self, y, hid):
+                self.x = 0.0
+                self.y = y
+                self.hole_id = hid
+
+        mons = [P(y, "m{}".format(int(y))) for y in self.mon_y]
+        unk = P(15.0, "u15")
+        self.reg.set_neighbors([unk], mons)
+        self.assertEqual(unk.bracket_a, "m10")
+        self.assertEqual(unk.bracket_b, "m20")
+
+    def test_predicted_curve_increasing(self):
+        from numpy import array
+
+        ys = array([h[1] for h in self.holes])
+        js = self.reg.predict(ys)
+        # rising gradient -> predicted J strictly increases up the tube
+        self.assertTrue(all(b > a for a, b in zip(js, js[1:])))
