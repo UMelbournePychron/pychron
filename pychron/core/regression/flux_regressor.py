@@ -194,15 +194,26 @@ class NearestNeighborFluxRegressor(SpecialFluxRegressor):
         if style == AVERAGE:
             return vs.std() if return_error else vs.mean()
         if style == LINEAR:
-            p0, p1 = self.clean_xs[idx][0], self.clean_xs[idx][-1]
+            # Linear interpolation is only defined between two points. With
+            # n > 2 the n-nearest set is index-sorted, so idx[0]/idx[-1] would
+            # be the index-extremes (not the two closest) and the middle
+            # neighbors would be silently ignored. Always interpolate between
+            # the two nearest monitors regardless of n.
+            i0, i1 = self._two_nearest(x, y)
+            p0, p1 = self.clean_xs[i0], self.clean_xs[i1]
             f = lever_fraction((x, y), p0, p1)
             if return_error:
-                e0, e1 = self.clean_yserr[idx][0], self.clean_yserr[idx][-1]
+                e0, e1 = self.clean_yserr[i0], self.clean_yserr[i1]
                 # propagate in quadrature, weighted by fractional distance
                 return (((1 - f) * e0) ** 2 + (f * e1) ** 2) ** 0.5
-            j0, j1 = vs[0], vs[-1]
+            j0, j1 = self.clean_ys[i0], self.clean_ys[i1]
             return j0 + f * (j1 - j0)
         return 0
+
+    def _two_nearest(self, x, y):
+        """Return indices of the two nearest monitors (by distance) to (x, y)."""
+        ds = ravel(calc_distances(self.clean_xs, array([[x, y]])))
+        return tuple(argsort(ds)[:2])
 
 
 class Bracketing1DRegressor(SpecialFluxRegressor):

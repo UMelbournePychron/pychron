@@ -284,6 +284,46 @@ class NearestNeighborLinearTest(TestCase):
         self.assertAlmostEqual(self.reg.predict(array([[5.0, 3.0]]))[0], 1.5, 6)
 
 
+class NearestNeighborLinearNGT2Test(TestCase):
+    """NN LINEAR with n>2 must interpolate between the two NEAREST monitors.
+
+    With n=4 the n-nearest set is index-sorted, so the old code used the
+    index-extreme pair (here x=0 and x=30) and ignored the middle monitors.
+    The fix interpolates between the two closest monitors regardless of n.
+    """
+
+    def setUp(self):
+        from numpy import array
+        from pychron.pychron_constants import LINEAR
+
+        self.reg = NearestNeighborFluxRegressor(
+            xs=array([[0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0]]),
+            ys=array([1.0, 2.0, 4.0, 8.0]),
+            yserr=array([0.1, 0.2, 0.4, 0.8]),
+            n=4,
+            interpolation_style=LINEAR,
+        )
+        self.reg.calculate()
+
+    def test_uses_two_nearest_not_index_extremes(self):
+        from numpy import array
+
+        # x=12 -> two nearest are x=10 (J=2) and x=20 (J=4); f=0.2 -> 2.4.
+        # If index-extremes (x=0,x=30) were used the result would differ.
+        self.assertAlmostEqual(self.reg.predict(array([[12.0, 0.0]]))[0], 2.4, 6)
+
+    def test_error_uses_two_nearest(self):
+        from numpy import array
+
+        # nearest errors 0.2, 0.4 at f=0.2
+        expected = (((0.8 * 0.2) ** 2) + ((0.2 * 0.4) ** 2)) ** 0.5
+        self.assertAlmostEqual(self.reg.predict_error(array([[12.0, 0.0]]))[0], expected, 9)
+
+    def test_two_nearest_indices(self):
+        i0, i1 = self.reg._two_nearest(12.0, 0.0)
+        self.assertEqual({int(i0), int(i1)}, {1, 2})
+
+
 # ============= EOF =============================================
 
 # class WeightedMeanRegressionTest(RegressionTestCase, TestCase):
