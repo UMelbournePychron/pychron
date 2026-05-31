@@ -29,15 +29,15 @@ from numpy import (
     sin,
     cos,
 )
-from scipy.interpolate import Rbf, bisplev, bisplrep, griddata
-from statsmodels.regression.linear_model import OLS, WLS
+from scipy.interpolate import Rbf, bisplev, bisplrep, griddata  # type: ignore
+from statsmodels.regression.linear_model import OLS, WLS  # type: ignore
 from traits.api import Bool, Enum, Int, Str
 
 from pychron.core.geometry.geometry import calc_distances
 from pychron.core.regression.base_regressor import BaseRegressor
 from pychron.core.regression.ols_regressor import MultipleLinearRegressor
-from pychron.core.stats.idw import Invdisttree
-from pychron.pychron_constants import WEIGHTED_MEAN, AVERAGE, LINEAR
+from pychron.core.stats.idw import Invdisttree  # type: ignore
+from pychron.pychron_constants import AVERAGE, LINEAR, WEIGHTED_MEAN
 
 
 class SpecialFluxRegressor(BaseRegressor):
