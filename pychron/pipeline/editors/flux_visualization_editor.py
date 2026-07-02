@@ -708,8 +708,9 @@ class BaseFluxVisualizationEditor(BaseTraitsEditor):
             fys = line_ys
         else:
             fys = reg.ys
-        self.max_j = fys.max()
-        self.min_j = fys.min()
+        if len(fys):
+            self.max_j = fys.max()
+            self.min_j = fys.min()
 
     def _graph_hole_vs_j(self, x, y, r, reg, refresh):
         if self._individual_analyses_enabled:
