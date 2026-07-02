@@ -671,13 +671,15 @@ class BaseFluxVisualizationEditor(BaseTraitsEditor):
             k = po.one_d_axis.lower()
             fxs = array(sorted({getattr(p, k) for p in ipositions}))
             line_ys = array(reg.predict(fxs))
-            lline, _ = g.new_series(fxs, line_ys, type="line")
+            lline, _ = g.new_series(fxs, line_ys, type="line", fit=None)
 
             # scatter the predicted unknown positions on the curve
             if self.unknown_positions:
                 uxs = array([getattr(p, k) for p in self.unknown_positions])
                 uys = array([p.j for p in self.unknown_positions])
-                g.new_series(uxs, uys, type="scatter", marker="diamond", marker_size=4)
+                g.new_series(
+                    uxs, uys, type="scatter", marker="diamond", marker_size=4, fit=None
+                )
 
         if self._individual_analyses_enabled:
             sel = [i for i, (a, x, y, e) in enumerate(self.cleaned_analyses) if a.is_omitted()]
