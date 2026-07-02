@@ -83,7 +83,9 @@ class InfoInspector(ScatterInspector):
         xy = event.x, event.y
         try:
             pos = self.component.hittest(xy, threshold=self.hittest_threshold)
-        except (IndexError, ValueError):
+        except (IndexError, ValueError, NotImplementedError):
+            # NotImplementedError: chaco's reverse_map_1d refuses an
+            # unsorted line index during hittest
             self._pointer_active = False
             return
 
