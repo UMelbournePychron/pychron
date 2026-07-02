@@ -18,6 +18,7 @@
 from operator import itemgetter
 
 from numpy import (
+    argsort,
     asarray,
     column_stack,
     ones_like,
