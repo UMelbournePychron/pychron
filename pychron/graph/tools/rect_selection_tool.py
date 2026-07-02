@@ -70,7 +70,14 @@ class RectSelectionTool(BaseTool):
         event.window.set_pointer("arrow")
 
     def _get_selection_token(self, event):
-        return self.component.map_index((event.x, event.y), threshold=self.threshold)
+        try:
+            return self.component.map_index(
+                (event.x, event.y), threshold=self.threshold
+            )
+        except (IndexError, ValueError, NotImplementedError):
+            # NotImplementedError: chaco's reverse_map_1d refuses an
+            # unsorted line index
+            return None
 
     def _already_selected(self, token):
         already = False

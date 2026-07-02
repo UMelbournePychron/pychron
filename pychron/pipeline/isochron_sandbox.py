@@ -68,7 +68,12 @@ class PointDraggingTool(DragTool):
     def normal_mouse_move(self, event):
         plot = self.component
 
-        ndx = plot.map_index((event.x, event.y), self.threshold)
+        try:
+            ndx = plot.map_index((event.x, event.y), self.threshold)
+        except (IndexError, ValueError, NotImplementedError):
+            # NotImplementedError: chaco's reverse_map_1d refuses an
+            # unsorted line index
+            return
         if ndx is None:
             if "selections" in plot.index.metadata:
                 del plot.index.metadata["selections"]
@@ -80,7 +85,12 @@ class PointDraggingTool(DragTool):
 
     def drag_start(self, event):
         plot = self.component
-        ndx = plot.map_index((event.x, event.y), self.threshold)
+        try:
+            ndx = plot.map_index((event.x, event.y), self.threshold)
+        except (IndexError, ValueError, NotImplementedError):
+            # NotImplementedError: chaco's reverse_map_1d refuses an
+            # unsorted line index
+            return
         if ndx is None:
             return
         self._drag_index = ndx

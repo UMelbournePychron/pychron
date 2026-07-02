@@ -35,7 +35,12 @@ class PointMoveTool(DragTool):
     constrain = Enum(None, "x", "y")
 
     def is_draggable(self, x, y):
-        return self.component.hittest((x, y))
+        try:
+            return self.component.hittest((x, y))
+        except (IndexError, ValueError, NotImplementedError):
+            # NotImplementedError: chaco's reverse_map_1d refuses an
+            # unsorted line index
+            return False
 
     def drag_start(self, event):
         data_pt = self.component.map_data((event.x, event.y), all_values=True)
@@ -82,7 +87,12 @@ class PointMoveTool(DragTool):
 
 class OverlayMoveTool(PointMoveTool):
     def is_draggable(self, x, y):
-        return self.component.hittest((x, y))
+        try:
+            return self.component.hittest((x, y))
+        except (IndexError, ValueError, NotImplementedError):
+            # NotImplementedError: chaco's reverse_map_1d refuses an
+            # unsorted line index
+            return False
 
     # def drag_end(self, event):
     #     event.window.set_pointer('arrow')

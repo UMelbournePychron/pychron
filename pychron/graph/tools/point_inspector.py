@@ -35,7 +35,15 @@ class PointInspector(InfoInspector):
     def get_selected_index(self):
         threshold = self.hittest_threshold
         if self.single_point:
-            idx = self.component.map_index(self.current_position, threshold=threshold)
+            try:
+                idx = self.component.map_index(
+                    self.current_position, threshold=threshold
+                )
+            except (IndexError, ValueError, NotImplementedError):
+                # NotImplementedError: chaco's reverse_map_1d refuses an
+                # unsorted line index. This runs during overlay draw, so
+                # swallow it rather than crash.
+                return
             if idx is not None:
                 return [idx]
         else:
