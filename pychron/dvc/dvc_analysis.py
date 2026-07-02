@@ -261,9 +261,9 @@ class DVCAnalysis(Analysis):
             name = add_extension(spec_sha, ".json")
             p = repository_path(self.repository_identifier, name)
             sd = get_spec_sha(p)
-            self.source_parameters = sd["spectrometer"]
-            self.gains = sd["gains"]
-            self.deflections = sd["deflections"]
+            self.source_parameters = sd.get("spectrometer", {})
+            self.gains = sd.get("gains", {})
+            self.deflections = sd.get("deflections", {})
 
     def check_has_n(self):
         return any((i._n is not None for i in self.iter_isotopes()))
