@@ -672,6 +672,9 @@ class BaseFluxVisualizationEditor(BaseTraitsEditor):
             fxs = array(sorted({getattr(p, k) for p in ipositions}))
             line_ys = array(reg.predict(fxs))
             lline, _ = g.new_series(fxs, line_ys, type="line", fit=None)
+            # fxs is sorted ascending; tell chaco so the info inspector's
+            # hittest/reverse_map_1d doesn't raise on a "sorted array" check
+            lline.index.sort_order = "ascending"
 
             # scatter the predicted unknown positions on the curve
             if self.unknown_positions:
