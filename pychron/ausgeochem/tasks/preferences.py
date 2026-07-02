@@ -109,6 +109,56 @@ class AusGeochemPreferences(BasePreferencesHelper):
     profiles = List(CredentialProfile)
     _suppress_sync = False
 
+    # UI controls (live on the model; the PreferencesPane binds items by
+    # name against the model as the view context object)
+    add_profile = Button("Add Profile")
+    remove_profile = Button("Remove Selected")
+    test_profile = Button("Test Selected")
+    selected_profile = Instance(CredentialProfile)
+    _test_status = Str
+
+    def _add_profile_fired(self):
+        existing = {p.name for p in self.profiles}
+        i = 1
+        while "profile{}".format(i) in existing:
+            i += 1
+        new = CredentialProfile(name="profile{}".format(i))
+        self.profiles = self.profiles + [new]
+        self.selected_profile = new
+        if not self.active_profile:
+            self.active_profile = new.name
+
+    def _remove_profile_fired(self):
+        if self.selected_profile is None:
+            return
+        # also nuke the keyring entry
+        credentials_store.delete_password(
+            self.selected_profile.name, self.selected_profile.username
+        )
+        remaining = [p for p in self.profiles if p is not self.selected_profile]
+        self.profiles = remaining
+        if self.active_profile == self.selected_profile.name:
+            self.active_profile = remaining[0].name if remaining else ""
+        self.selected_profile = None
+
+    def _test_profile_fired(self):
+        if self.selected_profile is None:
+            self._test_status = "select a profile first"
+            return
+        from pychron.ausgeochem.earthbank_service import (
+            AusGeochemEarthBankService,
+        )
+
+        p = self.selected_profile
+        svc = AusGeochemEarthBankService(bind=False)
+        svc.base_url = p.base_url
+        svc.username = p.username
+        svc.password = p.password
+        ok = svc.test_connection()
+        self._test_status = (
+            "[OK] {}".format(p.name) if ok else "[FAIL] {}".format(p.name)
+        )
+
     def _profiles_json_changed(self, new):
         if self._suppress_sync:
             return
@@ -143,54 +193,6 @@ class AusGeochemPreferencesPane(PreferencesPane):
     model_factory = AusGeochemPreferences
     category = "AusGeochem"
 
-    add_profile = Button("Add Profile")
-    remove_profile = Button("Remove Selected")
-    test_profile = Button("Test Selected")
-    selected_profile = Instance(CredentialProfile)
-    _test_status = Str
-
-    def _add_profile_fired(self):
-        existing = {p.name for p in self.model.profiles}
-        i = 1
-        while "profile{}".format(i) in existing:
-            i += 1
-        new = CredentialProfile(name="profile{}".format(i))
-        self.model.profiles = self.model.profiles + [new]
-        self.selected_profile = new
-        if not self.model.active_profile:
-            self.model.active_profile = new.name
-
-    def _remove_profile_fired(self):
-        if self.selected_profile is None:
-            return
-        # also nuke the keyring entry
-        credentials_store.delete_password(
-            self.selected_profile.name, self.selected_profile.username
-        )
-        remaining = [p for p in self.model.profiles if p is not self.selected_profile]
-        self.model.profiles = remaining
-        if self.model.active_profile == self.selected_profile.name:
-            self.model.active_profile = remaining[0].name if remaining else ""
-        self.selected_profile = None
-
-    def _test_profile_fired(self):
-        if self.selected_profile is None:
-            self._test_status = "select a profile first"
-            return
-        from pychron.ausgeochem.earthbank_service import (
-            AusGeochemEarthBankService,
-        )
-
-        p = self.selected_profile
-        svc = AusGeochemEarthBankService(bind=False)
-        svc.base_url = p.base_url
-        svc.username = p.username
-        svc.password = p.password
-        ok = svc.test_connection()
-        self._test_status = (
-            "[OK] {}".format(p.name) if ok else "[FAIL] {}".format(p.name)
-        )
-
     def traits_view(self):
         cols = [
             ObjectColumn(name="name", label="Profile"),
@@ -200,7 +202,7 @@ class AusGeochemPreferencesPane(PreferencesPane):
         ]
         table = TableEditor(
             columns=cols,
-            selected="object.selected_profile",
+            selected="selected_profile",
             sortable=False,
             editable=True,
             row_factory=CredentialProfile,
@@ -210,9 +212,9 @@ class AusGeochemPreferencesPane(PreferencesPane):
         return View(
             VGroup(
                 HGroup(
-                    Item("object.model.active_profile", label="Active Profile"),
+                    Item("active_profile", label="Active Profile"),
                 ),
-                UItem("object.model.profiles", editor=table),
+                UItem("profiles", editor=table),
                 HGroup(
                     UItem("add_profile"),
                     UItem("remove_profile"),
