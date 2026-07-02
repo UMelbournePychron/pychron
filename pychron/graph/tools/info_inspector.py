@@ -70,7 +70,12 @@ class InfoInspector(ScatterInspector):
 
     def normal_left_down(self, event):
         if not event.handled:
-            super(InfoInspector, self).normal_left_down(event)
+            try:
+                super(InfoInspector, self).normal_left_down(event)
+            except (IndexError, ValueError, NotImplementedError):
+                # NotImplementedError: chaco's reverse_map_1d refuses an
+                # unsorted line index during map_index/hittest
+                pass
 
     def normal_left_dclick(self, event):
         for sel in self.component.index.metadata[self.selection_metadata_name]:
