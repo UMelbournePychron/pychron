@@ -261,7 +261,7 @@ class OLSRegressor(BaseRegressor):
 
             def func(xi):
                 varY_hat = calc_hat(xi)
-                m = mswd**0.5 if mswd > 1 else 1
+                m = mswd**0.5 if mswd and mswd > 1 else 1
                 return sef * sqrt(varY_hat) * m
 
         else:
