@@ -478,6 +478,16 @@ def _ratio(analysis, key):
         return None, None
 
 
+def _to_float(v):
+    """Coerce to float, returning None for empty/blank/non-numeric values."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 class AusGeochemEarthBankService(Loggable):
     """HTTP helper for the AusGeochem EarthBank (v2) API."""
 
@@ -898,15 +908,15 @@ class AusGeochemEarthBankService(Loggable):
                 if analysis_group is not None
                 else getattr(analysis, "sample_note", None),
             )
-            lat = getattr(analysis, "latitude", None)
-            lon = getattr(analysis, "longitude", None)
+            lat = _to_float(getattr(analysis, "latitude", None))
+            lon = _to_float(getattr(analysis, "longitude", None))
             if lat is not None:
-                location.setdefault("lat", float(lat))
+                location.setdefault("lat", lat)
             if lon is not None:
-                location.setdefault("lon", float(lon))
-            elev = getattr(analysis, "elevation", None)
+                location.setdefault("lon", lon)
+            elev = _to_float(getattr(analysis, "elevation", None))
             if elev is not None:
-                sample.setdefault("referenceElevation", float(elev))
+                sample.setdefault("referenceElevation", elev)
 
         if analysis_group is not None:
             funding = getattr(analysis_group, "eb_funding", None)
