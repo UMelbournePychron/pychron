@@ -105,8 +105,11 @@ class AusGeochemPreferences(BasePreferencesHelper):
     profiles_json = Str
     active_profile = Str
 
-    # transient editable list for the UI (derived from profiles_json)
-    profiles = List(CredentialProfile)
+    # UI-only, editable list derived from profiles_json. Leading-underscore
+    # names are excluded from the preferences store (both load and save) by
+    # apptools, so this List(CredentialProfile) is never reloaded from a
+    # stringified preference value (which would fail trait validation).
+    _profiles = List(CredentialProfile)
     _suppress_sync = False
 
     # UI controls (live on the model; the PreferencesPane binds items by
@@ -114,57 +117,42 @@ class AusGeochemPreferences(BasePreferencesHelper):
     add_profile = Button("Add Profile")
     remove_profile = Button("Remove Selected")
     test_profile = Button("Test Selected")
-    selected_profile = Instance(CredentialProfile)
+    _selected_profile = Instance(CredentialProfile)
     _test_status = Str
 
-    # UI-only traits must not round-trip through the preferences store.
-    # apptools already excludes leading/trailing-underscore names; exclude
-    # the rest here so e.g. profiles (List of objects) isn't reloaded from
-    # a stringified preference value and fail trait validation.
-    def _is_preference_trait(self, trait_name):
-        if trait_name in (
-            "profiles",
-            "add_profile",
-            "remove_profile",
-            "test_profile",
-            "selected_profile",
-        ):
-            return False
-        return super(AusGeochemPreferences, self)._is_preference_trait(trait_name)
-
     def _add_profile_fired(self):
-        existing = {p.name for p in self.profiles}
+        existing = {p.name for p in self._profiles}
         i = 1
         while "profile{}".format(i) in existing:
             i += 1
         new = CredentialProfile(name="profile{}".format(i))
-        self.profiles = self.profiles + [new]
-        self.selected_profile = new
+        self._profiles = self._profiles + [new]
+        self._selected_profile = new
         if not self.active_profile:
             self.active_profile = new.name
 
     def _remove_profile_fired(self):
-        if self.selected_profile is None:
+        if self._selected_profile is None:
             return
         # also nuke the keyring entry
         credentials_store.delete_password(
-            self.selected_profile.name, self.selected_profile.username
+            self._selected_profile.name, self._selected_profile.username
         )
-        remaining = [p for p in self.profiles if p is not self.selected_profile]
-        self.profiles = remaining
-        if self.active_profile == self.selected_profile.name:
+        remaining = [p for p in self._profiles if p is not self._selected_profile]
+        self._profiles = remaining
+        if self.active_profile == self._selected_profile.name:
             self.active_profile = remaining[0].name if remaining else ""
-        self.selected_profile = None
+        self._selected_profile = None
 
     def _test_profile_fired(self):
-        if self.selected_profile is None:
+        if self._selected_profile is None:
             self._test_status = "select a profile first"
             return
         from pychron.ausgeochem.earthbank_service import (
             AusGeochemEarthBankService,
         )
 
-        p = self.selected_profile
+        p = self._selected_profile
         svc = AusGeochemEarthBankService(bind=False)
         svc.base_url = p.base_url
         svc.username = p.username
@@ -179,21 +167,21 @@ class AusGeochemPreferences(BasePreferencesHelper):
             return
         self._suppress_sync = True
         try:
-            self.profiles = _profiles_from_json(new)
+            self._profiles = _profiles_from_json(new)
         finally:
             self._suppress_sync = False
 
-    @on_trait_change("profiles[],profiles:name,profiles:base_url,profiles:username")
+    @on_trait_change("_profiles[],_profiles:name,_profiles:base_url,_profiles:username")
     def _profiles_changed(self):
         if self._suppress_sync:
             return
         self._suppress_sync = True
         try:
-            self.profiles_json = _profiles_to_json(self.profiles)
+            self.profiles_json = _profiles_to_json(self._profiles)
         finally:
             self._suppress_sync = False
 
-    @on_trait_change("profiles:password,profiles:username,profiles:name")
+    @on_trait_change("_profiles:password,_profiles:username,_profiles:name")
     def _profile_secret_changed(self, obj, name, old, new):
         if self._suppress_sync:
             return
@@ -217,7 +205,7 @@ class AusGeochemPreferencesPane(PreferencesPane):
         ]
         table = TableEditor(
             columns=cols,
-            selected="selected_profile",
+            selected="_selected_profile",
             sortable=False,
             editable=True,
             row_factory=CredentialProfile,
@@ -229,7 +217,7 @@ class AusGeochemPreferencesPane(PreferencesPane):
                 HGroup(
                     Item("active_profile", label="Active Profile"),
                 ),
-                UItem("profiles", editor=table),
+                UItem("_profiles", editor=table),
                 HGroup(
                     UItem("add_profile"),
                     UItem("remove_profile"),
