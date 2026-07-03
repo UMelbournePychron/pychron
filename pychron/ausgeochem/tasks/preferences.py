@@ -118,6 +118,21 @@ class AusGeochemPreferences(BasePreferencesHelper):
     remove_profile = Button("Remove Selected")
     test_profile = Button("Test Selected")
     _selected_profile = Instance(CredentialProfile)
+
+    def _initialize(self, preferences):
+        # Legacy cleanup: older builds persisted the derived 'profiles' trait
+        # as a stringified list of CredentialProfile objects. apptools would
+        # try to coerce that string back into a List(CredentialProfile) and
+        # raise a TraitError, crashing the preferences dialog. Remove the
+        # stale key before delegating so it can never be reloaded.
+        for legacy in ("profiles", "selected_profile"):
+            key = "{}.{}".format(self.preferences_path, legacy)
+            try:
+                if preferences.get(key) is not None:
+                    preferences.remove(key)
+            except Exception:
+                pass
+        super(AusGeochemPreferences, self)._initialize(preferences)
     _test_status = Str
 
     def _add_profile_fired(self):
