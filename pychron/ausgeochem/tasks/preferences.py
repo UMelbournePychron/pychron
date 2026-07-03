@@ -133,6 +133,15 @@ class AusGeochemPreferences(BasePreferencesHelper):
             except Exception:
                 pass
         super(AusGeochemPreferences, self)._initialize(preferences)
+        # apptools sets profiles_json during load with notifications
+        # suppressed, so _profiles_json_changed never fires and the editable
+        # _profiles list would stay empty. Populate it explicitly here.
+        self._suppress_sync = True
+        try:
+            self._profiles = _profiles_from_json(self.profiles_json)
+        finally:
+            self._suppress_sync = False
+
     _test_status = Str
 
     def _add_profile_fired(self):
