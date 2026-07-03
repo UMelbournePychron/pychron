@@ -105,7 +105,7 @@ class AusGeochemPreferences(BasePreferencesHelper):
     profiles_json = Str
     active_profile = Str
 
-    # transient editable list for the UI
+    # transient editable list for the UI (derived from profiles_json)
     profiles = List(CredentialProfile)
     _suppress_sync = False
 
@@ -116,6 +116,21 @@ class AusGeochemPreferences(BasePreferencesHelper):
     test_profile = Button("Test Selected")
     selected_profile = Instance(CredentialProfile)
     _test_status = Str
+
+    # UI-only traits must not round-trip through the preferences store.
+    # apptools already excludes leading/trailing-underscore names; exclude
+    # the rest here so e.g. profiles (List of objects) isn't reloaded from
+    # a stringified preference value and fail trait validation.
+    def _is_preference_trait(self, trait_name):
+        if trait_name in (
+            "profiles",
+            "add_profile",
+            "remove_profile",
+            "test_profile",
+            "selected_profile",
+        ):
+            return False
+        return super(AusGeochemPreferences, self)._is_preference_trait(trait_name)
 
     def _add_profile_fired(self):
         existing = {p.name for p in self.profiles}
