@@ -26,6 +26,20 @@ from uncertainties import nominal_value, std_dev
 
 from pychron.core.ui.preference_binding import bind_preference
 from pychron.loggable import Loggable
+from pychron.pychron_constants import SE, SD, SEM, MSEM
+
+# EarthBank's /api/core/l-error-types vocabulary has no entry for pychron's
+# verbose error-kind labels (SE, SEM, SD, MSEM). Map them to the canonical
+# EarthBank names (1-sigma convention). MSEM (SE inflated by sqrt(MSWD)) has
+# no MSWD-aware EarthBank type; the numeric value already carries the
+# inflation, so it maps to "1 SE".
+ERROR_TYPES_ENDPOINT = "/api/core/l-error-types"
+EB_ERROR_TYPE_MAP = {
+    SE.lower(): "1 SE",
+    SEM.lower(): "1 SE",
+    MSEM.lower(): "1 SE",
+    SD.lower(): "1 sigma",
+}
 
 # Field whitelists derived from EarthBank (AusGeochem) v2 Core/ArAr DTOs.
 # Mirror the apiField row of the upload spreadsheets so payloads pass through
@@ -1215,6 +1229,11 @@ class AusGeochemEarthBankService(Loggable):
             if endpoint is None:
                 # server-side enum / no lookup endpoint; pass name through
                 continue
+            if endpoint == ERROR_TYPES_ENDPOINT:
+                # normalize pychron error-kind labels to EarthBank vocabulary
+                mapped = EB_ERROR_TYPE_MAP.get(str(name).strip().lower())
+                if mapped is not None and mapped != name:
+                    name = out[name_key] = mapped
             lookup_id = self.lookup_id(endpoint, name)
             if lookup_id is None:
                 self.warning(
