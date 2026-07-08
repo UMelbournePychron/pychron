@@ -745,15 +745,26 @@ class AusGeochemEarthBankService(Loggable):
         # bypass resolve_lookups on the wrapper itself (nested)
         return self._post_raw("/api/core/sample-with-locations", wrapper)
 
-    def find_sample_by_name(self, name):
-        """Look up an existing sample by exact name. Returns its id or None."""
+    def find_sample_by_name(self, name, data_package_id=None):
+        """Look up an existing sample by exact name. Returns its id or None.
+
+        Every EarthBank sample belongs to exactly one DataPackage (its
+        ``sampleDTO.dataPackageId``). When ``data_package_id`` is given the
+        lookup is scoped to that package with a ``dataPackageId.equals``
+        filter, so an upload never reuses a same-named sample that lives in a
+        *different* package — reusing one would link the new ArArDataPoint
+        across packages (leaving the target package's sample count at 0). Pass
+        ``None`` only for an intentionally global search."""
 
         if not name:
             return None
+        params = {"name.equals": name, "size": 5}
+        if data_package_id is not None:
+            params["dataPackageId.equals"] = int(data_package_id)
         resp = self._request(
             "get",
             "/api/core/sample-with-locations",
-            params={"name.equals": name, "size": 5},
+            params=params,
         )
         if resp is None:
             return None
@@ -763,8 +774,15 @@ class AusGeochemEarthBankService(Loggable):
             return None
         for row in rows or []:
             sample = (row or {}).get("sampleDTO") or {}
-            if sample.get("name") == name:
-                return sample.get("id")
+            if sample.get("name") != name:
+                continue
+            # Defend against a server that ignores the package filter: only
+            # accept a row whose package matches the requested scope.
+            if data_package_id is not None and sample.get(
+                "dataPackageId"
+            ) != int(data_package_id):
+                continue
+            return sample.get("id")
         return None
 
     # ------------------------------------------------------------------
@@ -1378,7 +1396,9 @@ class AusGeochemEarthBankService(Loggable):
         # name already lives on the server, otherwise create one.
         sample_id = dp_overrides.pop("sampleId", None)
         if sample_id is None:
-            sample_id = self.find_sample_by_name(sample_label)
+            sample_id = self.find_sample_by_name(
+                sample_label, data_package_id=package_id
+            )
             if sample_id is None:
                 s_dto, l_dto = self.build_sample_payload(
                     analysis=analyses[0], analysis_group=analysis_group

@@ -150,7 +150,12 @@ def main():
     print("  sample_id =", sample_id)
 
     # 5. Lookup sample back by name
-    ok, found = _step("find_sample_by_name", lambda: svc.find_sample_by_name(sample_name))
+    ok, found = _step(
+        "find_sample_by_name",
+        lambda: svc.find_sample_by_name(
+            sample_name, data_package_id=int(package_id) if package_id else None
+        ),
+    )
     print("  match =", found, "expected", sample_id)
 
     # 6. Create an ArArDataPoint and link it
