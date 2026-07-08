@@ -44,8 +44,13 @@ from pychron.envisage.tasks.base_preferences_helper import BasePreferencesHelper
 
 class CredentialProfile(HasTraits):
     name = Str("default")
-    base_url = Str("https://app.ausgeochem.org")
+    base_url = Str("https://ausgeochem.auscope.org.au")
     username = Str
+    # numeric id of the DataPackage uploads write into; required for upload
+    data_package_id = Str
+    # institution id (e.g. 193203 = University of Melbourne); scopes the
+    # package picker and is used when creating a new package
+    institution_id = Str
     # password is transient; persisted in the OS keyring via credentials_store
     password = Password
     # remember (name, username) actually written so renames clean up the keyring
@@ -71,6 +76,8 @@ def _profiles_to_json(profiles):
                 "name": p.name,
                 "base_url": p.base_url,
                 "username": p.username,
+                "data_package_id": p.data_package_id,
+                "institution_id": p.institution_id,
             }
             for p in profiles
         ]
@@ -90,8 +97,10 @@ def _profiles_from_json(blob):
             continue
         p = CredentialProfile(
             name=entry.get("name", ""),
-            base_url=entry.get("base_url", "https://app.ausgeochem.org"),
+            base_url=entry.get("base_url", "https://ausgeochem.auscope.org.au"),
             username=entry.get("username", ""),
+            data_package_id=str(entry.get("data_package_id") or ""),
+            institution_id=str(entry.get("institution_id") or ""),
         )
         p.hydrate_password()
         profiles.append(p)
@@ -117,7 +126,9 @@ class AusGeochemPreferences(BasePreferencesHelper):
     add_profile = Button("Add Profile")
     remove_profile = Button("Remove Selected")
     test_profile = Button("Test Selected")
+    select_package = Button("Select / Create Package")
     _selected_profile = Instance(CredentialProfile)
+    _test_status = Str
 
     def _initialize(self, preferences):
         # Legacy cleanup: older builds persisted the derived 'profiles' trait
@@ -142,7 +153,18 @@ class AusGeochemPreferences(BasePreferencesHelper):
         finally:
             self._suppress_sync = False
 
-    _test_status = Str
+    def _svc_for(self, p):
+        from pychron.ausgeochem.earthbank_service import (
+            AusGeochemEarthBankService,
+        )
+
+        svc = AusGeochemEarthBankService(bind=False)
+        svc.base_url = p.base_url
+        svc.username = p.username
+        svc.password = p.password
+        svc.data_package_id = p.data_package_id
+        svc.institution_id = p.institution_id
+        return svc
 
     def _add_profile_fired(self):
         existing = {p.name for p in self._profiles}
@@ -172,19 +194,30 @@ class AusGeochemPreferences(BasePreferencesHelper):
         if self._selected_profile is None:
             self._test_status = "select a profile first"
             return
-        from pychron.ausgeochem.earthbank_service import (
-            AusGeochemEarthBankService,
-        )
-
         p = self._selected_profile
-        svc = AusGeochemEarthBankService(bind=False)
-        svc.base_url = p.base_url
-        svc.username = p.username
-        svc.password = p.password
+        svc = self._svc_for(p)
         ok = svc.test_connection()
         self._test_status = (
             "[OK] {}".format(p.name) if ok else "[FAIL] {}".format(p.name)
         )
+
+    def _select_package_fired(self):
+        if self._selected_profile is None:
+            self._test_status = "select a profile first"
+            return
+        from pychron.ausgeochem.data_package_dialog import DataPackageDialog
+
+        p = self._selected_profile
+        svc = self._svc_for(p)
+        if not svc.login(prompt=True):
+            self._test_status = "[FAIL] login for {}".format(p.name)
+            return
+        dlg = DataPackageDialog(service=svc, institution_id=p.institution_id)
+        dlg.load()
+        info = dlg.edit_traits(kind="livemodal")
+        if info.result and dlg.selected_id:
+            p.data_package_id = str(dlg.selected_id)
+            self._test_status = "package set to {}".format(dlg.selected_id)
 
     def _profiles_json_changed(self, new):
         if self._suppress_sync:
@@ -195,7 +228,10 @@ class AusGeochemPreferences(BasePreferencesHelper):
         finally:
             self._suppress_sync = False
 
-    @on_trait_change("_profiles[],_profiles:name,_profiles:base_url,_profiles:username")
+    @on_trait_change(
+        "_profiles[],_profiles:name,_profiles:base_url,_profiles:username,"
+        "_profiles:data_package_id,_profiles:institution_id"
+    )
     def _profiles_changed(self):
         if self._suppress_sync:
             return
@@ -226,6 +262,8 @@ class AusGeochemPreferencesPane(PreferencesPane):
             ObjectColumn(name="base_url", label="Base URL"),
             ObjectColumn(name="username", label="Username"),
             ObjectColumn(name="password", label="Password", format_func=lambda v: "•" * len(v) if v else ""),
+            ObjectColumn(name="data_package_id", label="Data Package Id"),
+            ObjectColumn(name="institution_id", label="Institution Id"),
         ]
         table = TableEditor(
             columns=cols,
@@ -246,6 +284,7 @@ class AusGeochemPreferencesPane(PreferencesPane):
                     UItem("add_profile"),
                     UItem("remove_profile"),
                     UItem("test_profile"),
+                    UItem("select_package"),
                     UItem("_test_status", style="readonly"),
                 ),
                 label="EarthBank Credentials",

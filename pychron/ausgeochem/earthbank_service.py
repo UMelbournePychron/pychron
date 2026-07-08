@@ -28,46 +28,50 @@ from pychron.core.ui.preference_binding import bind_preference
 from pychron.loggable import Loggable
 from pychron.pychron_constants import SE, SD, SEM, MSEM
 
-# EarthBank's /api/core/l-error-types vocabulary has no entry for pychron's
-# verbose error-kind labels (SE, SEM, SD, MSEM). Map them to the canonical
-# EarthBank names (1-sigma convention). MSEM (SE inflated by sqrt(MSWD)) has
-# no MSWD-aware EarthBank type; the numeric value already carries the
-# inflation, so it maps to "1 SE".
-ERROR_TYPES_ENDPOINT = "/api/core/l-error-types"
-EB_ERROR_TYPE_MAP = {
-    SE.lower(): "1 SE",
-    SEM.lower(): "1 SE",
-    MSEM.lower(): "1 SE",
-    SD.lower(): "1 sigma",
-}
-
 # Field whitelists derived from EarthBank (AusGeochem) v2 Core/ArAr DTOs.
 # Mirror the apiField row of the upload spreadsheets so payloads pass through
 # the same gate as the manual template-based ingest.
 
 # Map from a payload "*Name" field to the GET endpoint that resolves it to an id.
 # Keys are the *Name field; values are (endpoint, idField).
+# Uncertainty *type* (sigma level) lives in the `l_uncertainty` table, which
+# has NO list endpoint on this deployment but uses stable small ids
+# (1 = "1 sigma", 2 = "2 sigma"). It is NOT `/api/core/l-error-types` (that
+# table's "1 sigma" is id 59666 and violates the ar_ar_data_point FK). Resolve
+# these names statically via STATIC_LOOKUPS below; the uncertainty *unit*
+# (abs./%) still resolves against /api/arar/LUncertaintyUnit.
+
+
+def _norm_uncertainty(name):
+    """Normalize a sigma-level name to a UNCERTAINTY_TYPE_VOCAB key."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+
+
+UNCERTAINTY_TYPE_VOCAB = {
+    "1sigma": 1,
+    "1s": 1,
+    "1": 1,
+    "2sigma": 2,
+    "2s": 2,
+    "2": 2,
+}
+# pychron reports error-kinds as SE / SEM / SD / MSEM (MSEM = SE inflated by
+# sqrt(MSWD)); all are 1-sigma-level estimators, so they map to l_uncertainty
+# id 1. Keyed by the normalized constant value so a rename in pychron_constants
+# stays in sync.
+for _kind in (SE, SEM, SD, MSEM):
+    UNCERTAINTY_TYPE_VOCAB[_norm_uncertainty(_kind)] = 1
+
+
 LOOKUP_ENDPOINTS = {
     "analysisScaleName": ("/api/arar/LAnalysisScale", "analysisScaleId"),
-    "analyticalUncertaintyTypeName": (
-        "/api/core/l-error-types",
-        "analyticalUncertaintyTypeId",
-    ),
     "analyticalUncertaintyUnitName": (
         "/api/arar/LUncertaintyUnit",
         "analyticalUncertaintyUnitId",
     ),
-    "apparentAgeUncertaintyTypeName": (
-        "/api/core/l-error-types",
-        "apparentAgeUncertaintyTypeId",
-    ),
     "apparentAgeUncertaintyUnitName": (
         "/api/arar/LUncertaintyUnit",
         "apparentAgeUncertaintyUnitId",
-    ),
-    "jvalueUncertaintyTypeName": (
-        "/api/core/l-error-types",
-        "jvalueUncertaintyTypeId",
     ),
     "jvalueUncertaintyUnitName": (
         "/api/arar/LUncertaintyUnit",
@@ -75,11 +79,6 @@ LOOKUP_ENDPOINTS = {
     ),
     "arMethodName": ("/api/arar/LArArMethod", "arMethodId"),
     "ageCalcTypeName": ("/api/arar/LAgeType", "ageCalcTypeId"),
-    "ageUncertaintyTypeName": ("/api/core/l-error-types", "ageUncertaintyTypeId"),
-    "calculatedAgeUncertaintyTypeName": (
-        "/api/core/l-error-types",
-        "calculatedAgeUncertaintyTypeId",
-    ),
     "calculatedAgeUncertaintyTypeUnitsName": (
         "/api/arar/LUncertaintyUnit",
         "calculatedAgeUncertaintyTypeUnitsId",
@@ -96,10 +95,6 @@ LOOKUP_ENDPOINTS = {
     "plateauStepName": (None, "plateauStepId"),
     "inverseIsoStepName": (None, "inverseIsoStepId"),
     "weightedMeanStepName": (None, "weightedMeanStepId"),
-    "apparentAgeUncertainityTypeName": (
-        "/api/core/l-error-types",
-        "apparentAgeUncertainityTypeId",
-    ),
     # Sample DTO lookups
     "sampleKindName": ("/api/core/l-sample-kinds", "sampleKindId"),
     "sampleMethodName": ("/api/core/l-sample-methods", "sampleMethodId"),
@@ -115,6 +110,33 @@ LOOKUP_ENDPOINTS = {
     # but we resolve the name → id here so the link payload can be built.
     "fundingName": ("/api/core/fundings", "fundingId"),
     "literatureName": ("/api/core/literature", "literatureId"),
+}
+
+# name_key -> (vocab, id_key): resolved from a static map instead of an API
+# endpoint. Used for the uncertainty *type* (sigma level) fields whose backing
+# table is not exposed by any list endpoint.
+STATIC_LOOKUPS = {
+    "analyticalUncertaintyTypeName": (
+        UNCERTAINTY_TYPE_VOCAB,
+        "analyticalUncertaintyTypeId",
+    ),
+    "apparentAgeUncertaintyTypeName": (
+        UNCERTAINTY_TYPE_VOCAB,
+        "apparentAgeUncertaintyTypeId",
+    ),
+    "apparentAgeUncertainityTypeName": (
+        UNCERTAINTY_TYPE_VOCAB,
+        "apparentAgeUncertainityTypeId",
+    ),
+    "jvalueUncertaintyTypeName": (
+        UNCERTAINTY_TYPE_VOCAB,
+        "jvalueUncertaintyTypeId",
+    ),
+    "ageUncertaintyTypeName": (UNCERTAINTY_TYPE_VOCAB, "ageUncertaintyTypeId"),
+    "calculatedAgeUncertaintyTypeName": (
+        UNCERTAINTY_TYPE_VOCAB,
+        "calculatedAgeUncertaintyTypeId",
+    ),
 }
 
 DATA_POINT_FIELDS = (
@@ -294,6 +316,7 @@ SAMPLE_FIELDS = (
     "archiveName",
     "collectDateMax",
     "collectDateMin",
+    "dataPackageId",
     "description",
     "id",
     "igsn",
@@ -505,15 +528,28 @@ def _to_float(v):
 class AusGeochemEarthBankService(Loggable):
     """HTTP helper for the AusGeochem EarthBank (v2) API."""
 
-    base_url = Str("https://app.ausgeochem.org")
+    base_url = Str("https://ausgeochem.auscope.org.au")
     username = Str
     password = Str
+
+    # Numeric id of the EarthBank DataPackage uploads are written into. Every
+    # ArArDataPoint POST must carry a dataPackageId the account can write, else
+    # the server rejects with 500 "Package is not writable by user". Set
+    # per-profile; pick/create via the package dialog or discover ids with
+    # tests/packages_probe.py.
+    data_package_id = Str
+    # Institution the account belongs to (e.g. 193203 = University of
+    # Melbourne). Scopes the package picker list and is used when creating a
+    # new package. Not available from /api/account, so configured per-profile.
+    institution_id = Str
 
     profiles_json = Str
     active_profile = Str
     profiles = List
 
     _token = None
+    # last human-friendly error message produced by a failed request
+    _last_error = None
 
     def __init__(self, bind=True, *args, **kw):
         super(AusGeochemEarthBankService, self).__init__(*args, **kw)
@@ -551,6 +587,9 @@ class AusGeochemEarthBankService(Loggable):
 
         self.base_url = chosen.get("base_url") or self.base_url
         self.username = chosen.get("username", "")
+        # per-profile upload target package (str; may be blank until configured)
+        self.data_package_id = str(chosen.get("data_package_id") or "")
+        self.institution_id = str(chosen.get("institution_id") or "")
         # Password lives in the OS keyring rather than the JSON blob. The blob
         # may still carry one (for back-compat); fall back to that if present.
         try:
@@ -617,8 +656,46 @@ class AusGeochemEarthBankService(Loggable):
 
     # ------------------------------------------------------------------
     # POST endpoints — one per ArAr sheet
-    def create_data_point(self, dto):
-        return self._post_json("/api/arar/ArArDataPoint", dto)
+    def create_data_point(
+        self,
+        dto,
+        data_package_id=None,
+        sample_id=None,
+        name=None,
+        irradiation_name=None,
+        setup_name=None,
+    ):
+        """POST an ArArDataPoint as the ``ArArDataPointLithoDTO`` wrapper the
+        API requires.
+
+        The umbrella record (package + sample link) goes in ``dataPointDTO``;
+        the ArAr-specific fields go in ``extendingDataPointDTO``. Posting the
+        bare ArAr fields with no ``dataPointDTO`` is rejected 500 "Package is
+        not writable by user" because the server resolves the package from the
+        umbrella, not from a field on the ArAr DTO. This single POST also
+        creates the core data-point and links the sample inline, so no
+        separate ``create_core_data_point`` call is needed.
+
+        Returns the parsed response; its top-level ``id`` is the
+        arArDataPointId (used by aliquots / measurements)."""
+
+        core = {"dataStructure": "ARARDATAPOINT"}
+        if data_package_id is not None:
+            core["dataPackageId"] = int(data_package_id)
+        if sample_id is not None:
+            core["sampleId"] = int(sample_id)
+        if name:
+            core["name"] = name
+        ext = self.resolve_lookups(self._cleanup(dto, DATA_POINT_FIELDS))
+        wrapper = {
+            "dataPointDTO": self._cleanup(core, CORE_DATA_POINT_FIELDS),
+            "extendingDataPointDTO": ext,
+        }
+        if irradiation_name:
+            wrapper["arArIrradiationName"] = irradiation_name
+        if setup_name:
+            wrapper["arArSetUpName"] = setup_name
+        return self._post_raw("/api/arar/ArArDataPoint", wrapper)
 
     def create_aliquot(self, dto):
         return self._post_json("/api/arar/ArArAliquot", dto)
@@ -639,18 +716,30 @@ class AusGeochemEarthBankService(Loggable):
         payload = self._cleanup(dto, CORE_DATA_POINT_FIELDS)
         return self._post_raw("/api/core/data-points", payload)
 
-    def create_sample(self, sample_dto, location_dto=None, short_name=None):
+    def create_sample(
+        self, sample_dto, location_dto=None, short_name=None, data_package_id=None
+    ):
         """POST a SampleWithLocationDTO. ``sample_dto`` and ``location_dto``
         are flat dicts; their *Name fields are resolved to *Id by
         ``resolve_lookups``. Returns the parsed JSON response (containing the
-        new id) or ``None``."""
+        new id) or ``None``.
 
+        ``data_package_id`` is required for write: like every EarthBank write,
+        a sample without a writable dataPackageId is rejected 500 "Package is
+        not writable by user". It is stamped on both the wrapper and the inner
+        sampleDTO since the accepting field is not documented."""
+
+        sample_dto = dict(sample_dto or {})
+        if data_package_id is not None:
+            sample_dto["dataPackageId"] = int(data_package_id)
         sample_clean = self.resolve_lookups(self._cleanup(sample_dto, SAMPLE_FIELDS))
         location_clean = self._cleanup(location_dto, LOCATION_FIELDS) if location_dto else {}
         wrapper = {
             "sampleDTO": sample_clean,
             "locationDTO": location_clean,
         }
+        if data_package_id is not None:
+            wrapper["dataPackageId"] = int(data_package_id)
         if short_name:
             wrapper["shortName"] = short_name
         # bypass resolve_lookups on the wrapper itself (nested)
@@ -676,6 +765,116 @@ class AusGeochemEarthBankService(Loggable):
             sample = (row or {}).get("sampleDTO") or {}
             if sample.get("name") == name:
                 return sample.get("id")
+        return None
+
+    # ------------------------------------------------------------------
+    # data package discovery + creation
+    #
+    # EarthBank ties every ArArDataPoint to a DataPackage; a POST without a
+    # writable ``dataPackageId`` is rejected 500 "Package is not writable by
+    # user". The management API lives at /api/management/data-packages (NOT
+    # /api/core/). Rows come back wrapped as {"dataPackageDTO": {...}, counts}.
+    # Write permission is NOT exposed in the DTO (only countEditors /
+    # countSupervisors), so callers pick from the institution-scoped list and
+    # let the upload surface a server error on a non-writable choice.
+    DATA_PACKAGES_ENDPOINT = "/api/management/data-packages"
+
+    def get_account(self):
+        """Return the authenticated user's account dict (or None)."""
+        resp = self._request("get", "/api/account")
+        if resp is None:
+            return None
+        try:
+            return resp.json()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _unwrap_package(row):
+        """Flatten a management row to a simple dict of the fields we use."""
+        dto = (row or {}).get("dataPackageDTO") or row or {}
+        return {
+            "id": dto.get("id") or (row or {}).get("id"),
+            "name": dto.get("name") or (row or {}).get("name"),
+            "distribution": dto.get("distribution"),
+            "workflowState": dto.get("workflowState"),
+            "institutionId": dto.get("institutionId"),
+            "institutionName": dto.get("institutionName"),
+            "createdById": dto.get("createdById"),
+        }
+
+    def list_data_packages(self, institution_id=None, name=None, size=500):
+        """List DataPackages, optionally filtered by institution / name.
+
+        Returns a list of flattened dicts (see ``_unwrap_package``). Uses
+        JHipster criteria query params. Empty list on failure."""
+
+        params = {"page": 0, "size": size, "sort": "name,ASC"}
+        if institution_id:
+            params["institutionId.equals"] = institution_id
+        if name:
+            params["name.contains"] = name
+        resp = self._request("get", self.DATA_PACKAGES_ENDPOINT, params=params)
+        if resp is None:
+            return []
+        try:
+            rows = resp.json()
+        except ValueError:
+            return []
+        return [self._unwrap_package(r) for r in (rows or [])]
+
+    def create_data_package(
+        self,
+        name,
+        institution_id=None,
+        distribution="PRIVATE",
+        workflow_state="IN_PROGRESS",
+        license_text="Creative Commons",
+        description=None,
+    ):
+        """Create a DataPackage and return its new id (or None).
+
+        The creator is added as supervisor server-side from the auth token, so
+        a freshly created package is always writable. The endpoint takes a
+        ``DataPackageLithoDTO``: the fields must be nested under
+        ``dataPackageDTO`` (a flat body is accepted but SILENTLY IGNORES the
+        name and creates a default-named package), and are also mirrored at the
+        top level to match the wrapper the API returns."""
+
+        dto = {
+            "name": name,
+            "distribution": distribution,
+            "workflowState": workflow_state,
+            "licenseText": license_text,
+        }
+        if institution_id:
+            dto["institutionId"] = int(institution_id)
+        if description:
+            dto["description"] = description
+
+        body = dict(dto)
+        body["dataPackageDTO"] = dto
+        resp = self._request(
+            "post",
+            self.DATA_PACKAGES_ENDPOINT,
+            json=body,
+            headers={"Content-Type": "application/json"},
+        )
+        if resp is not None:
+            try:
+                data = resp.json()
+            except ValueError:
+                data = None
+            if data:
+                pkg = self._unwrap_package(data)
+                if pkg.get("id"):
+                    self.info("created DataPackage id={}".format(pkg["id"]))
+                    return pkg["id"]
+        self.warning(
+            "Could not create the data package {!r} in EarthBank.\n\n{}".format(
+                name, self._last_error or "See the log for details."
+            )
+        )
         return None
 
     # ------------------------------------------------------------------
@@ -1148,40 +1347,89 @@ class AusGeochemEarthBankService(Loggable):
             self.info("EarthBank upload cancelled by user")
             return None
 
+        # Resolve the target DataPackage. Without a writable dataPackageId the
+        # ArArDataPoint POST returns 500 "Package is not writable by user" and
+        # every group fails identically, so fail fast with a clear message
+        # rather than firing doomed requests.
+        sample_label = getattr(analyses[0], "sample", None) or getattr(
+            analysis_group, "sample", None
+        ) or "this sample"
+
+        package_id = dp_overrides.pop("dataPackageId", None) or self.data_package_id
+        if not package_id:
+            self.warning(
+                "Cannot upload {s} to EarthBank: no data package has been "
+                "selected. Open the EarthBank upload node (or Preferences) and "
+                "use 'Select / Create Package' to choose where the data should "
+                "go, then try again.".format(s=sample_label)
+            )
+            return None
+        try:
+            package_id = int(package_id)
+        except (TypeError, ValueError):
+            self.warning(
+                "Cannot upload {s} to EarthBank: the selected data package "
+                "({p!r}) is not valid. Re-select a package with 'Select / Create "
+                "Package'.".format(s=sample_label, p=package_id)
+            )
+            return None
+
         # Ensure a Sample record exists; reuse if a sample with the same
         # name already lives on the server, otherwise create one.
         sample_id = dp_overrides.pop("sampleId", None)
         if sample_id is None:
-            sample_name = getattr(analyses[0], "sample", None) or getattr(
-                analysis_group, "sample", None
-            )
-            sample_id = self.find_sample_by_name(sample_name)
+            sample_id = self.find_sample_by_name(sample_label)
             if sample_id is None:
                 s_dto, l_dto = self.build_sample_payload(
                     analysis=analyses[0], analysis_group=analysis_group
                 )
-                resp = self.create_sample(s_dto, l_dto, short_name=sample_name)
+                resp = self.create_sample(
+                    s_dto, l_dto, short_name=sample_label, data_package_id=package_id
+                )
                 sample_id = self._extract_sample_id(resp)
-                if sample_id is not None:
-                    self.info("created Sample id={}".format(sample_id))
+                if sample_id is None:
+                    # _request already set a friendly _last_error
+                    self.warning(
+                        "Upload of {s} stopped: the sample could not be saved to "
+                        "EarthBank.\n\n{why}".format(
+                            s=sample_label,
+                            why=self._last_error or "See the log for details.",
+                        )
+                    )
+                    return None
+                self.info("created Sample id={}".format(sample_id))
+
         dp_payload = self.build_data_point_payload(
             analysis_group=analysis_group, analysis=analyses[0], **dp_overrides
         )
-        dp_resp = self.create_data_point(dp_payload)
+        # The Litho POST embeds the umbrella data-point, so it carries the
+        # package + sample link itself — no separate create_core_data_point.
+        dp_resp = self.create_data_point(
+            dp_payload,
+            data_package_id=package_id,
+            sample_id=sample_id,
+            name=sample_label,
+        )
         dp_id = self._extract_id(dp_resp)
         if dp_id is None:
-            self.warning("ArArDataPoint create did not return an id; aborting upload")
+            self.warning(
+                "Upload of {s} stopped: the analysis data point could not be "
+                "saved to EarthBank.\n\n{why}".format(
+                    s=sample_label,
+                    why=self._last_error or "See the log for details.",
+                )
+            )
             return None
         self.info("created ArArDataPoint id={}".format(dp_id))
 
-        if sample_id is not None:
-            link = {
-                "dataStructure": "ARARDATAPOINT",
-                "arArDataPointId": dp_id,
-                "sampleId": sample_id,
-                "name": getattr(analyses[0], "sample", None),
-            }
-            self.create_core_data_point(link)
+        # Sub-records: the data point is already in EarthBank, so a failure here
+        # leaves an incomplete record rather than aborting. Collect any failures
+        # and report them together in plain language at the end.
+        failures = []
+
+        def _step(label, resp):
+            if resp is None:
+                failures.append((label, self._last_error))
 
         seen_aliquots = set()
         for a in analyses:
@@ -1189,21 +1437,47 @@ class AusGeochemEarthBankService(Loggable):
             if aname in seen_aliquots:
                 continue
             seen_aliquots.add(aname)
-            self.create_aliquot(
-                self.build_aliquot_payload(analysis=a, arArDataPointId=dp_id)
+            _step(
+                "aliquot {}".format(aname),
+                self.create_aliquot(
+                    self.build_aliquot_payload(analysis=a, arArDataPointId=dp_id)
+                ),
             )
 
         for a in analyses:
-            self.create_measurement(
-                self.build_measurement_payload(analysis=a, arArDataPointId=dp_id)
+            _step(
+                "measurement {}".format(self._aliquot_name(a)),
+                self.create_measurement(
+                    self.build_measurement_payload(analysis=a, arArDataPointId=dp_id)
+                ),
             )
 
-        self.create_age_calculation(
-            self.build_age_calc_payload(analysis_group, arArDataPointId=dp_id)
+        _step(
+            "age calculation",
+            self.create_age_calculation(
+                self.build_age_calc_payload(analysis_group, arArDataPointId=dp_id)
+            ),
         )
-        self.create_age_summary(
-            self.build_age_summary_payload(analysis_group, arArDataPointId=dp_id)
+        _step(
+            "age summary",
+            self.create_age_summary(
+                self.build_age_summary_payload(analysis_group, arArDataPointId=dp_id)
+            ),
         )
+
+        if failures:
+            items = "\n".join(
+                "  • {}{}".format(lbl, ": " + why if why else "")
+                for lbl, why in failures
+            )
+            self.warning(
+                "{s} was partly uploaded to EarthBank. The main data point was "
+                "saved, but {n} supporting record(s) failed, so the record in "
+                "EarthBank is incomplete:\n\n{items}\n\nYou can re-run the upload "
+                "to retry the missing pieces.".format(
+                    s=sample_label, n=len(failures), items=items
+                )
+            )
 
         return dp_id
 
@@ -1229,14 +1503,12 @@ class AusGeochemEarthBankService(Loggable):
             if endpoint is None:
                 # server-side enum / no lookup endpoint; pass name through
                 continue
-            if endpoint == ERROR_TYPES_ENDPOINT:
-                # normalize pychron error-kind labels to EarthBank vocabulary
-                mapped = EB_ERROR_TYPE_MAP.get(str(name).strip().lower())
-                if mapped is not None and mapped != name:
-                    name = out[name_key] = mapped
             lookup_id = self.lookup_id(endpoint, name)
             if lookup_id is None:
-                self.warning(
+                # non-fatal: field dropped, upload continues. Not surfaced as a
+                # user warning (would be modal spam); hard failures are reported
+                # once at the end of upload_analysis_group.
+                self.debug(
                     "EarthBank lookup miss: {} = {!r} (endpoint {})".format(
                         name_key, name, endpoint
                     )
@@ -1244,6 +1516,28 @@ class AusGeochemEarthBankService(Loggable):
                 out.pop(name_key, None)
                 continue
             out[id_key] = lookup_id
+
+        # static-vocab lookups (e.g. sigma level). Resolve name -> id from the
+        # map and drop the *Name field: the id is the FK the server stores, and
+        # the backing table has no list endpoint to validate a name against.
+        for name_key, (vocab, id_key) in STATIC_LOOKUPS.items():
+            if name_key not in out:
+                continue
+            if id_key in out and out[id_key] is not None:
+                out.pop(name_key, None)
+                continue
+            name = out.pop(name_key, None)
+            if not name:
+                continue
+            vid = vocab.get(_norm_uncertainty(name))
+            if vid is None:
+                self.debug(
+                    "EarthBank uncertainty-type miss: {} = {!r} (dropped)".format(
+                        name_key, name
+                    )
+                )
+                continue
+            out[id_key] = vid
         return out
 
     def lookup_id(self, endpoint, name):
@@ -1393,6 +1687,104 @@ class AusGeochemEarthBankService(Loggable):
         except ValueError:
             return resp.text
 
+    # ------------------------------------------------------------------
+    # human-friendly error reporting
+    #
+    # Path fragment -> plain-English name of the thing being saved. Used so an
+    # error can say "your sample" instead of "/api/core/sample-with-locations".
+    _RECORD_NAMES = (
+        ("sample-with-locations", "sample"),
+        ("ArArDataPoint", "analysis data point"),
+        ("ArArAliquot", "aliquot"),
+        ("ArArMeasurement", "measurement"),
+        ("ArArAgeCalc", "age calculation"),
+        ("ArArAgeSummary", "age summary"),
+        ("data-packages", "data package"),
+        ("data-points", "data-point link"),
+    )
+
+    def _friendly_record(self, path):
+        for frag, label in self._RECORD_NAMES:
+            if frag in path:
+                return label
+        return "record"
+
+    @staticmethod
+    def _constraint_field(detail):
+        """Pull a readable field name out of a Postgres FK/constraint error."""
+        m = re.search(r"Key \(([a-z0-9_]+?)(?:_id)?\)", detail)
+        if not m:
+            m = re.search(r"constraint \"fk_[a-z0-9]+?_([a-z0-9_]+?)_id", detail)
+        if not m:
+            return None
+        return m.group(1).replace("_", " ").strip()
+
+    def _humanize_error(self, status, text, path):
+        """Translate an EarthBank/JHipster error body into a message a
+        geochronologist (not a programmer) can act on. The raw body is still
+        logged via debug for troubleshooting."""
+
+        what = self._friendly_record(path)
+        detail = ""
+        try:
+            j = json.loads(text)
+            detail = (
+                j.get("detail") or j.get("message") or j.get("title") or ""
+            ).strip()
+        except (ValueError, AttributeError):
+            detail = (text or "").strip()
+        low = detail.lower()
+        pkg = self.data_package_id or "the selected package"
+
+        if "not writable" in low or (status == 500 and "package" in low):
+            return (
+                "Cannot upload the {what}: your EarthBank account does not have "
+                "write access to data package {pkg}. Use 'Select / Create "
+                "Package' to choose a package you own or create a new one, then "
+                "upload again.".format(what=what, pkg=pkg)
+            )
+        if status in (401, 403):
+            return (
+                "EarthBank rejected your login while uploading the {what}. Check "
+                "your EarthBank username and password in Preferences, and that "
+                "your account has permission to upload.".format(what=what)
+            )
+        if status == 404:
+            return (
+                "EarthBank could not find the upload service for the {what}. The "
+                "server address is probably wrong — check the Base URL in "
+                "Preferences (it should be "
+                "https://ausgeochem.auscope.org.au).".format(what=what)
+            )
+        if (
+            "constraint" in low
+            or "not present in table" in low
+            or "foreign key" in low
+        ):
+            field = self._constraint_field(detail)
+            fld = " ('{}')".format(field) if field else ""
+            return (
+                "EarthBank did not recognise one of the values in the {what}{fld}. "
+                "This is usually a term that does not match EarthBank's standard "
+                "list (mineral, flux monitor, uncertainty type, etc.). Check that "
+                "field and try again.".format(what=what, fld=fld)
+            )
+        if status >= 500:
+            return (
+                "EarthBank had a server problem while saving the {what}. This is on "
+                "EarthBank's side — wait a moment and try again, or contact "
+                "support@lithodat.com if it keeps happening.".format(what=what)
+            )
+        # generic 4xx: show the cleaned server detail if we have one
+        clean = re.split(r";|nested exception", detail)[0].strip() if detail else ""
+        if clean:
+            return "EarthBank rejected the {what}: {clean}".format(
+                what=what, clean=clean
+            )
+        return "EarthBank rejected the {what} (HTTP {status}).".format(
+            what=what, status=status
+        )
+
     def _request(self, method, path, require_auth=True, **kw):
         url = self._url(path)
         headers = kw.pop("headers", {})
@@ -1409,7 +1801,13 @@ class AusGeochemEarthBankService(Loggable):
                 method, url, headers=headers, timeout=timeout, **kw
             )
         except requests.RequestException as exc:
-            self.warning("EarthBank request error ({}): {}".format(path, exc))
+            self.debug("EarthBank request error ({} {}): {}".format(method, path, exc))
+            # set _last_error only; the calling flow surfaces one rich message
+            # to the user (avoids a modal per failed request).
+            self._last_error = (
+                "Could not reach EarthBank at {}. Check your internet connection "
+                "and the Base URL in Preferences.".format(self.base_url)
+            )
             return
 
         if resp.status_code == 401 and require_auth:
@@ -1424,14 +1822,22 @@ class AusGeochemEarthBankService(Loggable):
                     method, url, headers=headers, timeout=timeout, **kw
                 )
             except requests.RequestException as exc:
-                self.warning("EarthBank retry failed ({}): {}".format(path, exc))
+                self.debug("EarthBank retry failed ({}): {}".format(path, exc))
+                self._last_error = (
+                    "Lost the connection to EarthBank at {} while retrying. Try "
+                    "again in a moment.".format(self.base_url)
+                )
                 return
 
         if not resp.ok:
-            self.warning(
-                "EarthBank request failed ({} {}): {}".format(
-                    method.upper(), path, resp.text
+            # raw body for troubleshooting; friendly message for the user
+            self.debug(
+                "EarthBank {} {} -> {}: {}".format(
+                    method.upper(), path, resp.status_code, resp.text
                 )
+            )
+            self._last_error = self._humanize_error(
+                resp.status_code, resp.text, path
             )
             return
 

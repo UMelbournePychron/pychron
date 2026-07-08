@@ -28,12 +28,14 @@ from pychron.ausgeochem.earthbank_service import (
     AusGeochemEarthBankService,
     LOOKUP_ENDPOINTS,
 )
+from pychron.ausgeochem.tests import load_dotenv
 
 
 def _env_or_skip(allow_anon=False):
+    load_dotenv()
     user = os.environ.get("EARTHBANK_USER")
     pwd = os.environ.get("EARTHBANK_PASS")
-    url = os.environ.get("EARTHBANK_URL", "https://app.ausgeochem.org")
+    url = os.environ.get("EARTHBANK_URL", "https://ausgeochem.auscope.org.au")
     if not (user and pwd):
         if not allow_anon:
             print("SKIP: set EARTHBANK_USER and EARTHBANK_PASS to run.")
@@ -98,6 +100,13 @@ def main():
     svc.base_url = url
     svc.username = user
     svc.password = pwd
+    # headless: route logging to stdout so a warning doesn't pull in the GUI
+    svc.warning = lambda *a, **k: print("  WARN:", *a)
+    svc.info = lambda *a, **k: print("  INFO:", *a)
+    svc.debug = lambda *a, **k: None
+    package_id = os.environ.get("EARTHBANK_DATA_PACKAGE_ID")
+    svc.data_package_id = package_id or ""
+    print("  package={}".format(package_id or "(unset)"))
 
     # 1. Authentication
     ok, _ = _step("authenticate", lambda: svc._ensure_token())
@@ -130,7 +139,12 @@ def main():
     location_dto = {"lat": -34.93, "lon": 138.6, "name": sample_name}
     ok, resp = _step(
         "create_sample",
-        lambda: svc.create_sample(sample_dto, location_dto, short_name=sample_name),
+        lambda: svc.create_sample(
+            sample_dto,
+            location_dto,
+            short_name=sample_name,
+            data_package_id=int(package_id) if package_id else None,
+        ),
     )
     sample_id = svc._extract_sample_id(resp) if ok else None
     print("  sample_id =", sample_id)
@@ -141,30 +155,31 @@ def main():
 
     # 6. Create an ArArDataPoint and link it
     if sample_id is not None:
+        # Minimal payload whose *Name fields resolve on this instance. The
+        # uncertainty type/unit vocab varies per deployment ("1 sigma" /
+        # "Absolute" do not resolve here), so they are omitted from the smoke
+        # test — the real upload derives them from the AnalysisGroup.
         dp_payload = {
             "analysisDate": "2026-05-20",
             "analysisScaleName": "Single Grain",
-            "analyticalUncertaintyTypeName": "1 sigma",
-            "analyticalUncertaintyUnitName": "Absolute",
-            "apparentAgeUncertaintyTypeName": "1 sigma",
-            "apparentAgeUncertaintyUnitName": "Absolute",
-            "jvalueUncertaintyUnitName": "Absolute",
             "arMethodName": "Step-heating - laser",
             "analysisUnits": "fA",
             "mineralName": "sanidine",
         }
-        ok, resp = _step("create_data_point", lambda: svc.create_data_point(dp_payload))
+        # POST goes as the ArArDataPointLithoDTO wrapper: package + sample link
+        # live in dataPointDTO. create_data_point builds that and links the
+        # sample inline (no separate core-data-point call needed).
+        ok, resp = _step(
+            "create_data_point",
+            lambda: svc.create_data_point(
+                dp_payload,
+                data_package_id=int(package_id) if package_id else None,
+                sample_id=sample_id,
+                name=sample_name,
+            ),
+        )
         dp_id = svc._extract_id(resp) if ok else None
         print("  arArDataPointId =", dp_id)
-
-        if dp_id is not None:
-            link = {
-                "dataStructure": "ARARDATAPOINT",
-                "arArDataPointId": dp_id,
-                "sampleId": sample_id,
-                "name": sample_name,
-            }
-            _step("create_core_data_point (link)", lambda: svc.create_core_data_point(link))
 
     print("\nintegration test complete; created sample={}, leave or delete via UI".format(
         sample_name

@@ -23,7 +23,7 @@ from traitsui.api import EnumEditor, Item, OKCancelButtons, View, VGroup
 class EarthBankCredentialsDialog(HasTraits):
     available_profiles = List(Str)
     profile_name = Str("default")
-    base_url = Str("https://app.ausgeochem.org")
+    base_url = Str("https://ausgeochem.auscope.org.au")
     username = Str
     password = Password
 

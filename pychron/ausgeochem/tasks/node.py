@@ -23,6 +23,7 @@ import time
 
 from traits.api import (
     Bool,
+    Button,
     Directory,
     Enum,
     HasTraits,
@@ -118,6 +119,8 @@ class AusGeochemNode(BaseNode):
 
     mode = Enum("upload", "export_xlsx", "preflight")
     confirm_upload = Bool(True)
+    select_package = Button("Select / Create Package")
+    package_label = Str
     output_dir = Directory
     file_prefix = Str("earthbank")
     include_sample_xlsx = Bool(True)
@@ -130,6 +133,7 @@ class AusGeochemNode(BaseNode):
     # ------------------------------------------------------------------
     # lifecycle: refresh group list from unknowns before view opens
     def _configure_hook(self):
+        self._update_package_label()
         self._interpretation_vocab = self._fetch_interpretations()
         existing = {g.sample: g for g in self.groups}
         new_groups = []
@@ -177,6 +181,25 @@ class AusGeochemNode(BaseNode):
         return list(_FALLBACK_INTERPRETATIONS)
 
     # ------------------------------------------------------------------
+    def _update_package_label(self):
+        pid = self.service.data_package_id
+        self.package_label = "Data package: {}".format(pid or "(none — select one)")
+
+    def _select_package_fired(self):
+        from pychron.ausgeochem.data_package_dialog import DataPackageDialog
+
+        svc = self.service
+        if not svc.login(prompt=True):
+            self.package_label = "Data package: login failed"
+            return
+        dlg = DataPackageDialog(service=svc, institution_id=svc.institution_id)
+        dlg.load()
+        info = dlg.edit_traits(kind="livemodal")
+        if info.result and dlg.selected_id:
+            svc.data_package_id = str(dlg.selected_id)
+        self._update_package_label()
+
+    # ------------------------------------------------------------------
     def traits_view(self):
         mode_grp = HGroup(
             Item(
@@ -196,6 +219,10 @@ class AusGeochemNode(BaseNode):
                 "confirm_upload",
                 label="Confirm active user before upload",
                 enabled_when="mode == 'upload'",
+            ),
+            HGroup(
+                UItem("select_package", enabled_when="mode == 'upload'"),
+                UItem("package_label", style="readonly"),
             ),
             label="Upload",
             show_border=True,
