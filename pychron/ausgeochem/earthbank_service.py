@@ -23,6 +23,7 @@ from datetime import datetime
 import requests
 from traits.api import List, Str, on_trait_change
 from uncertainties import nominal_value, std_dev
+from uncertainties.core import AffineScalarFunc
 
 from pychron.core.ui.preference_binding import bind_preference
 from pychron.loggable import Loggable
@@ -1032,7 +1033,8 @@ class AusGeochemEarthBankService(Loggable):
                 pass
 
         # radiogenic yield + j value + apparent age
-        payload.setdefault("radiogenicArgon", getattr(analysis, "radiogenic_yield", None))
+        rad_yield, _ = _split_ufloat(getattr(analysis, "radiogenic_yield", None))
+        payload.setdefault("radiogenicArgon", rad_yield)
         jv, je = _split_ufloat(getattr(analysis, "j", None))
         payload.setdefault("jValue", jv)
         payload.setdefault("jValueUncertainty", je)
@@ -1911,6 +1913,12 @@ class AusGeochemEarthBankService(Loggable):
         if not payload:
             return {}
         cleaned = {k: v for k, v in payload.items() if v not in (None, "")}
+        # coerce any stray uncertainties (ufloat/AffineScalarFunc) to their
+        # nominal float — they are not JSON serializable and must never reach
+        # the request body.
+        for k, v in cleaned.items():
+            if isinstance(v, AffineScalarFunc):
+                cleaned[k] = float(nominal_value(v))
         if fields:
             allowed = set(fields)
             cleaned = {k: v for k, v in cleaned.items() if k in allowed}
