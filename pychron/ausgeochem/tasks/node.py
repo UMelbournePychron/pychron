@@ -45,7 +45,7 @@ from traitsui.api import (
 )
 
 from pychron.pipeline.nodes.base import BaseNode
-from pychron.processing.analyses.analysis_group import AnalysisGroup
+from pychron.processing.analyses.analysis_group import InterpretedAgeGroup
 
 
 # -- helpers -----------------------------------------------------------------
@@ -306,7 +306,7 @@ class AusGeochemNode(BaseNode):
         group_meta = {g.sample: g for g in self.groups}
         groups = []
         for sample, analyses in _group_by_sample(state.unknowns):
-            ag = AnalysisGroup(analyses=analyses)
+            ag = InterpretedAgeGroup(analyses=analyses)
             meta = group_meta.get(sample)
             groups.append((ag, meta, sample))
 
