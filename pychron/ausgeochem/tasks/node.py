@@ -331,6 +331,23 @@ class AusGeochemNode(BaseNode):
         return dp
 
     def _run_upload(self, groups):
+        svc = self.service
+        if not svc.data_package_id:
+            svc.warning_dialog(
+                "Nothing was uploaded: no EarthBank data package has been "
+                "selected. Open the EarthBank upload node (or Preferences) and "
+                "use 'Select / Create Package' to choose where the data should "
+                "go, then try again.",
+                title="EarthBank Upload",
+            )
+            return
+
+        # confirm once for the whole run, not once per sample
+        if self.confirm_upload and not svc.confirm_active_user():
+            svc.info("EarthBank upload cancelled by user")
+            return
+
+        uploaded, partial, failed = [], [], []
         for ag, meta, sample in groups:
             self.service.info(
                 "Uploading {} ({} analyses) to EarthBank".format(
@@ -349,13 +366,39 @@ class AusGeochemNode(BaseNode):
                     ag.eb_funding = meta.funding
                 if meta.literature:
                     ag.eb_literature = meta.literature
-            dp_id = self.service.upload_analysis_group(
-                ag, confirm=self.confirm_upload
+            dp_id = svc.upload_analysis_group(ag, confirm=False)
+            problem = svc.last_upload_problem
+            if dp_id is None:
+                failed.append((sample, problem or "See the log for details."))
+                continue
+            svc.info("EarthBank ArArDataPoint id={} ({})".format(dp_id, sample))
+            if problem:
+                partial.append((sample, problem))
+            else:
+                uploaded.append(sample)
+
+        self._report_upload(len(groups), uploaded, partial, failed)
+
+    def _report_upload(self, total, uploaded, partial, failed):
+        """Tell the user how the run went in a single dialog. The service
+        only logs per-sample problems, so without this a failed upload is
+        silent."""
+        lines = [
+            "{} of {} sample(s) uploaded to EarthBank.".format(
+                len(uploaded) + len(partial), total
             )
-            if dp_id is not None:
-                self.service.info(
-                    "EarthBank ArArDataPoint id={} ({})".format(dp_id, sample)
-                )
+        ]
+        if uploaded:
+            lines.append("Uploaded: {}".format(", ".join(str(s) for s in uploaded)))
+        for label, items in (("Incomplete", partial), ("Not uploaded", failed)):
+            if items:
+                lines.append("{}:".format(label))
+                lines.extend("{} - {}".format(s, why) for s, why in items)
+        msg = "\n\n".join(lines)
+        if partial or failed:
+            self.service.warning_dialog(msg, title="EarthBank Upload")
+        else:
+            self.service.information_dialog(msg, title="EarthBank Upload")
 
     def _run_preflight(self, groups):
         total = 0

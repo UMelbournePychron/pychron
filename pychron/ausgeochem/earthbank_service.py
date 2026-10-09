@@ -551,6 +551,10 @@ class AusGeochemEarthBankService(Loggable):
     _token = None
     # last human-friendly error message produced by a failed request
     _last_error = None
+    # Plain-language reason the most recent upload_analysis_group call did not
+    # (fully) succeed, or None. warning() only reaches the log, so the caller
+    # reads this to tell the user what happened.
+    last_upload_problem = None
 
     def __init__(self, bind=True, *args, **kw):
         super(AusGeochemEarthBankService, self).__init__(*args, **kw)
@@ -1370,13 +1374,22 @@ class AusGeochemEarthBankService(Loggable):
             self.warning(msg)
             return True
 
+    def _upload_problem(self, headline, why=None):
+        """Log an upload failure and keep its reason for the caller."""
+        self.warning("{}\n\n{}".format(headline, why) if why else headline)
+        self.last_upload_problem = why or headline
+
     def upload_analysis_group(self, analysis_group, confirm=True, **dp_overrides):
         """Push a complete ArAr record set: DataPoint, Aliquots, Measurements,
-        AgeCalc, AgeSummary. Returns the created arArDataPointId or ``None``."""
+        AgeCalc, AgeSummary. Returns the created arArDataPointId or ``None``.
 
+        On failure (or a partial upload) ``last_upload_problem`` holds a
+        plain-language reason."""
+
+        self.last_upload_problem = None
         analyses = list(getattr(analysis_group, "analyses", None) or [])
         if not analyses:
-            self.warning("AnalysisGroup has no analyses; nothing to upload")
+            self._upload_problem("AnalysisGroup has no analyses; nothing to upload")
             return None
 
         if confirm and not self.confirm_active_user():
@@ -1393,7 +1406,7 @@ class AusGeochemEarthBankService(Loggable):
 
         package_id = dp_overrides.pop("dataPackageId", None) or self.data_package_id
         if not package_id:
-            self.warning(
+            self._upload_problem(
                 "Cannot upload {s} to EarthBank: no data package has been "
                 "selected. Open the EarthBank upload node (or Preferences) and "
                 "use 'Select / Create Package' to choose where the data should "
@@ -1403,7 +1416,7 @@ class AusGeochemEarthBankService(Loggable):
         try:
             package_id = int(package_id)
         except (TypeError, ValueError):
-            self.warning(
+            self._upload_problem(
                 "Cannot upload {s} to EarthBank: the selected data package "
                 "({p!r}) is not valid. Re-select a package with 'Select / Create "
                 "Package'.".format(s=sample_label, p=package_id)
@@ -1427,12 +1440,10 @@ class AusGeochemEarthBankService(Loggable):
                 sample_id = self._extract_sample_id(resp)
                 if sample_id is None:
                     # _request already set a friendly _last_error
-                    self.warning(
+                    self._upload_problem(
                         "Upload of {s} stopped: the sample could not be saved to "
-                        "EarthBank.\n\n{why}".format(
-                            s=sample_label,
-                            why=self._last_error or "See the log for details.",
-                        )
+                        "EarthBank.".format(s=sample_label),
+                        self._last_error or "See the log for details.",
                     )
                     return None
                 self.info("created Sample id={}".format(sample_id))
@@ -1450,12 +1461,10 @@ class AusGeochemEarthBankService(Loggable):
         )
         dp_id = self._extract_id(dp_resp)
         if dp_id is None:
-            self.warning(
+            self._upload_problem(
                 "Upload of {s} stopped: the analysis data point could not be "
-                "saved to EarthBank.\n\n{why}".format(
-                    s=sample_label,
-                    why=self._last_error or "See the log for details.",
-                )
+                "saved to EarthBank.".format(s=sample_label),
+                self._last_error or "See the log for details.",
             )
             return None
         self.info("created ArArDataPoint id={}".format(dp_id))
@@ -1508,7 +1517,7 @@ class AusGeochemEarthBankService(Loggable):
                 "  • {}{}".format(lbl, ": " + why if why else "")
                 for lbl, why in failures
             )
-            self.warning(
+            self._upload_problem(
                 "{s} was partly uploaded to EarthBank. The main data point was "
                 "saved, but {n} supporting record(s) failed, so the record in "
                 "EarthBank is incomplete:\n\n{items}\n\nYou can re-run the upload "
