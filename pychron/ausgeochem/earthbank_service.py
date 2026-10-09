@@ -784,6 +784,22 @@ class AusGeochemEarthBankService(Loggable):
             ) != int(data_package_id):
                 continue
             return sample.get("id")
+        # Record what the server did return: a miss here followed by a
+        # "name already used" rejection on create means the sample exists but
+        # was filtered out above.
+        self.debug(
+            "no sample named {!r} in package {}; server returned {}".format(
+                name,
+                data_package_id,
+                [
+                    (
+                        ((r or {}).get("sampleDTO") or {}).get("name"),
+                        ((r or {}).get("sampleDTO") or {}).get("dataPackageId"),
+                    )
+                    for r in rows or []
+                ],
+            )
+        )
         return None
 
     # ------------------------------------------------------------------
@@ -1741,6 +1757,14 @@ class AusGeochemEarthBankService(Loggable):
             return None
         return m.group(1).replace("_", " ").strip()
 
+    @staticmethod
+    def _duplicate_name(detail):
+        """Pull the record name out of a duplicate-name error. EarthBank
+        stores names as ``<name>\\<package name>``; only the leading name is
+        meaningful to the user."""
+        m = re.search(r"(?:=\(|Name ')([^\\,')]+)", detail)
+        return m.group(1).strip() if m else None
+
     def _humanize_error(self, status, text, path):
         """Translate an EarthBank/JHipster error body into a message a
         geochronologist (not a programmer) can act on. The raw body is still
@@ -1777,6 +1801,20 @@ class AusGeochemEarthBankService(Loggable):
                 "server address is probably wrong — check the Base URL in "
                 "Preferences (it should be "
                 "https://ausgeochem.auscope.org.au).".format(what=what)
+            )
+        # A re-upload into a package that already holds the record. Checked
+        # before the constraint / 5xx branches: the data point reports it as a
+        # 400 unique-constraint violation, the sample as a 500 "already used".
+        if "duplicate key" in low or "already used" in low:
+            name = self._duplicate_name(detail)
+            nm = " '{}'".format(name) if name else ""
+            return (
+                "The {what}{nm} already exists in EarthBank data package {pkg}, "
+                "so it was skipped and nothing was changed. To upload it again, "
+                "delete the existing record in EarthBank first, or choose a "
+                "different package with 'Select / Create Package'.".format(
+                    what=what, nm=nm, pkg=pkg
+                )
             )
         if (
             "constraint" in low
